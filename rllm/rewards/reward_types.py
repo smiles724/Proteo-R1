@@ -15,6 +15,10 @@ class RewardConfig:
     math_reward_weight: float = 1.0
     use_math_orm: bool = False
 
+    # Config for protein-based reward
+    use_bio_orm: bool = False
+    bio_task: str = 'function'
+
     # Config for code-based rewards
     code_reward_weight: float = 1.0
 
@@ -43,7 +47,7 @@ class RewardType(Enum):
         CODE (str): Represents a coding-related problem type.
         UNK (str): Represents an unknown or unclassified problem type.
     """
-
+    PROTEIN = "PROTEIN"
     MATH = "MATH"
     CODE = "CODE"
     WEB = "WEB"

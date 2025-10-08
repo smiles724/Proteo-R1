@@ -461,7 +461,7 @@ def grade_answer_mathd(given_answer: str, ground_truth: str) -> bool:
     ground_truth_normalized_mathd = mathd_normalize_answer(ground_truth)
     given_answer_normalized_mathd = mathd_normalize_answer(given_answer)
 
-    # be at least as lenient as mathd
+    # be at least as lenient as mathd -- exact match
     if ground_truth_normalized_mathd == given_answer_normalized_mathd:
         return True
     return False
