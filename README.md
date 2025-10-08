@@ -100,20 +100,30 @@ In the data preprocessing folder, there are **four Colab notebooks** that form a
   import os
   os.environ["OPENAI_API_KEY"] = "sk-..."
 
+- **Training Env**
+- All required package/version and python torch version are all in requirement.txt
 
+```python
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -U pip wheel setuptools
 
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+
+pip install -r requirements.txt
+```
 
 
 This repo provides three entrypoints:
 
 - **`train_prefix_qwen.py`** — single‑GPU trainer (gradient accumulation; optional encoder finetune).  
-- **`train_prefix_qwen_fsdp.py`** — multi‑GPU trainer using 🤗 **Accelerate** (FSDP/ZeRO), **slot‑based ProTrek `.pt` loading**, uniform 2048‑D protein vectors, explicit dtype control.  
-- **`train_prefix_qwen_fsdp_offload1.py`** — FSDP full‑shard with **CPU offload** (plus optional 8‑bit/Adafactor optimizers).
+- **`train_prefix_qwen_fsdp_vanilla.py`** — multi‑GPU trainer using only FSDP  
+- **`train_prefix_qwen_fsdp_offload1.py`** — FSDP full‑shard with **CPU offload** (plus optional 8‑bit/Adafactor optimizers). (Haven't test yet)
 
 ---
 
 ## How it works (high‑level)
-- Each example contains a **prompt**, **response**, and optional **protein inputs**:
+- Each example contains a **prompt**, **response**, and **protein inputs**:
   - `aa_seq` — amino‑acid sequence (string) → **1024‑D** embedding
   - `stru_str` — Foldseek 3Di structural string (string) → **1024‑D** embedding
 - The two 1024‑D embeddings are **concatenated** to **2048‑D**; if one modality is missing, it is **zero‑padded**.
@@ -128,7 +138,7 @@ This repo provides three entrypoints:
 protein_encoder.py                 # sequence encoder wrapper
 structure_encoder.py               # 3Di structure encoder wrapper
 train_prefix_qwen.py               # single‑GPU trainer
-train_prefix_qwen_fsdp.py          # multi‑GPU trainer (FSDP/ZeRO)
+train_prefix_qwen_fsdp_vanilla.py  # multi‑GPU trainer (FSDP)
 train_prefix_qwen_fsdp_offload1.py # multi‑GPU trainer (FSDP + CPU offload)
 ```
 
@@ -142,8 +152,8 @@ Each line is a JSON object:
 {
   "prompt": "Describe the likely function of this protein.",
   "response": "This appears to be an enzyme with possible hydrolase activity.",
-  "aa_seq": "MGDVEK...",         // optional
-  "stru_str": "ACDEFGH..."       // optional (Foldseek 3Di string)
+  "aa_seq": "MGDVEK...",         // protein sequence
+  "stru_str": "ACDEFGH..."       // Foldseek 3Di string
 }
 ```
 The collator builds `[prompt + EOS] + [response + EOS]` and masks labels to supervise **only** the response (EOS included).
@@ -155,17 +165,53 @@ The collator builds `[prompt + EOS] + [response + EOS]` and masks labels to supe
 - **Weights** come from a ProTrek **`.pt`** checkpoint passed via `--protrek-ckpt`. The state dict is split by numeric **slot IDs**; `--prot-slot` and `--stru-slot` choose which sub‑model to load for **protein** and **structure** encoders respectively.
 - If a slot is missing, the script prints a warning and keeps random init for that encoder.
 
----
-
-## Dtype
-- **Single‑GPU (`train_prefix_qwen.py`)**: `--dtype {fp32,bf16,fp16}` controls LLM load precision. CE is computed stably; projectors/encoders are aligned appropriately.
-- **FSDP (`train_prefix_qwen_fsdp.py`)**: `--dtype {auto,fp32,fp16,bf16}` controls the **load dtype**. Projectors are instantiated in the **same dtype** as the LLM. Your Accelerate config may also specify mixed precision for autocast.
-- **FSDP + Offload (`train_prefix_qwen_fsdp_offload1.py`)**: precision managed by the Accelerate config; offload variant keeps CE stable and supports memory‑saving optimizer options.
-
----
-
 ## Rank‑sharded streaming
-The FSDP trainers stream JSONL and **shard lines by process rank** (`RANK/WORLD_SIZE`), so each GPU reads a disjoint subset without duplication.
+### Arguments & What They Mean
+
+#### Data & I/O
+- `--train-file <path>` — Path to training JSONL.
+- `--save-dir <dir>` — Where checkpoints/logs are written (created if missing).
+- `--log-every <int>` — Print/record metrics every _N_ steps.
+
+#### Base LLM
+- `--model-name <hf_id_or_path>` — Hugging Face model (e.g., `Qwen/Qwen2.5-7B-Instruct`, `Qwen/Qwen2.5-14B-Instruct`).
+- `--dtype {fp32,fp16,bf16}` — Compute/load dtype; **bf16** is recommended on Ampere/Hopper; **fp32** is heaviest.
+
+#### Protein & Structure Encoders
+- `--protein-config <hf_id_or_path>` — Protein encoder config/weights. _Server default: `esm2_t33_650M_UR50D`._
+- `--structure-config <hf_id_or_path>` — Structure encoder config/weights. _Server default: `foldseek_t30_150M`._
+- `--train-encoders` — If set, encoders are trainable (more VRAM/optimizer state). Omit to freeze.
+- `--protrek-ckpt <path>` — path to a ProTrek checkpoint (`ProTrek_650M.pt`) to initialize adapters/heads.
+- `--prot-slot <int>` / `--stru-slot <int>` — Which prefix “slot” each encoder feeds Default set: --prot-slot 1 / --stru-slot 3.
+
+#### Prefix Conditioning (projection head)
+- `--prefix-len <int>` — How many virtual tokens to prepend as the prefix.
+- `--proj-hid <int>` — Hidden size of the projection MLP from encoders → prefix space.
+- `--dropout <float>` — Dropout rate inside the projection/prefix modules.
+- `--single-token-prefix` — Use a 1-token prefix (if enabled); otherwise `--prefix-len` controls length.
+
+#### Optimization & Schedule
+- `--batch-size <int>` — **Global** batch size (across all ranks). If OOM, reduce or increase `--accum-steps`.
+- `--accum-steps <int>` — Gradient accumulation steps (effective batch = `batch_size × accum_steps`).
+- `--max-len <int>` — Tokenized sequence length (larger → more activations/VRAM).
+- `--epochs <int>` — Number of full passes over the dataset (or use `--steps-per-epoch` to cap).
+- `--lr <float>` — Base learning rate.
+- `--warmup-ratio <float>` — Fraction of total steps used for LR warmup.
+- `--weight-decay <float>` — AdamW weight decay.
+
+#### Weights & Biases (optional)
+- `--wandb` — Enable W&B logging (**requires** `WANDB_API_KEY` in env).
+- `--wandb-project <str>` / `--wandb-run-name <str>` / `--wandb-entity <str>` — W&B project/run metadata.
+- `--wandb-tags tag1,tag2,...` — Comma-separated tags.  
+  _Environment tips:_ `WANDB_MODE=online`, set `WANDB_DIR` to a fast disk, and `export WANDB_API_KEY=<your_key>` before launch.
+
+#### Runtime Notes
+- If use wandb, need to login before running the script
+- FSDP sharding is configured inside the script/policy; `torchrun --nproc_per_node <N> ...` controls the number of GPUs used on the node.
+- For large models (e.g., 14B in `fp32`), start with smaller `--batch-size` and `--max-len`, and prefer `bf16` on supported GPUs.
+- Activation checkpointing (if enabled in the policy) further reduces VRAM.
+
+
 
 ---
 
@@ -177,8 +223,8 @@ python train_prefix_qwen.py \
   --train-file /data/train.jsonl \
   --val-file   /data/val.jsonl \
   --model-name Qwen/Qwen2.5-0.5B-Instruct \
-  --protein-config   facebook/esm2_t12_35M_UR50D \
-  --structure-config facebook/esm2_t12_35M_UR50D \
+  --protein-config   esm2_t33_650M_UR50D \
+  --structure-config foldseek_t30_150M \
   --protrek-ckpt     /weights/ProTrek_35M.pt \
   --prot-slot 1 --stru-slot 3 \
   --dtype fp32 \
@@ -188,22 +234,26 @@ python train_prefix_qwen.py \
   --save-dir ./runs --save-every 1000
 ```
 
-### B) Multi‑GPU (FSDP/ZeRO)
-Create an Accelerate YAML (example below), then:
+### B) Multi‑GPU (FSDP) (Main training file)
 ```bash
-accelerate launch --config_file accelerate_fsdp_bf16.yaml train_prefix_qwen_fsdp.py \
-  --train-file /data/train.jsonl \
-  --val-file   /data/val.jsonl \
-  --model-name Qwen/Qwen2.5-7B-Instruct \
-  --protein-config   facebook/esm2_t12_35M_UR50D \
-  --structure-config facebook/esm2_t12_35M_UR50D \
-  --protrek-ckpt     /weights/ProTrek_35M.pt \
-  --prot-slot 1 --stru-slot 3 \
-  --dtype bf16 \
-  --prefix-len 4 \
-  --batch-size 1 --accum-steps 8 --max-len 2048 \
-  --epochs 1 --lr 1e-5 \
-  --save-dir ./runs_fsdp --save-every 1000
+torchrun --standalone --nproc_per_node="${NPROC_PER_NODE}" train_prefix_qwen_fsdp_vanilla.py \
+  --train-file level2_10k_train.jsonl \
+  --model-name Qwen/Qwen2.5-14B-Instruct \
+  --protein-config   esm2_t33_650M_UR50D \
+  --structure-config foldseek_t30_150M \
+  --train-encoders \
+  --dtype fp32 \
+  --prefix-len 8 \
+  --proj-hid 2048 \
+  --dropout 0.10 \
+  --batch-size 16 --accum-steps 1 --max-len 2048 \
+  --epochs 1 --lr 1e-5 --warmup-ratio 0.03 --weight-decay 0.05 \
+  --save-dir qwen2p5_14b_vanilla_fsdp_fp32 \
+  --log-every 20 \
+  --wandb --wandb-project MyProject --wandb-run-name qwen2p5_13b_sft_fp32 \
+  --wandb-entity team_name --wandb-tags qwen2p5,fsdp,fp32,train-encoders \
+  --protrek-ckpt ProTrek_650M.pt \
+  --prot-slot 1 --stru-slot 3
 ```
 
 **`accelerate_fsdp_bf16.yaml` (example):**
@@ -231,8 +281,8 @@ fsdp_config:
 accelerate launch --config_file accelerate_cpu_offload_bf16.yaml train_prefix_qwen_fsdp_offload1.py \
   --train-file /data/train.jsonl \
   --model-name Qwen/Qwen2.5-7B-Instruct \
-  --protein-config   facebook/esm2_t12_35M_UR50D \
-  --structure-config facebook/esm2_t12_35M_UR50D \
+  --protein-config   esm2_t33_650M_UR50D \
+  --structure-config foldseek_t30_150M \
   --protrek-ckpt     /weights/ProTrek_35M.pt \
   --prot-slot 1 --stru-slot 3 \
   --prefix-len 4 --batch-size 1 --accum-steps 8 \
@@ -244,30 +294,70 @@ accelerate launch --config_file accelerate_cpu_offload_bf16.yaml train_prefix_qw
 
 ---
 
-## Common arguments
-- `--train-file`, `--val-file` — JSONL paths.
-- `--model-name` — Hugging Face model ID or local path (e.g., `Qwen/Qwen2.5-7B-Instruct`).
-- `--protein-config`, `--structure-config` — encoder architectures (ESM‑style or local).
-- `--protrek-ckpt`, `--prot-slot`, `--stru-slot` — load encoder weights from ProTrek `.pt` via slots.
-- `--prefix-len` — number of soft prefix tokens (`--single-token-prefix` in FSDP trainer for 1‑token mode).
-- `--batch-size`, `--accum-steps`, `--max-len`, `--epochs`, `--lr`, `--warmup-ratio`, `--weight-decay`.
-- `--save-dir`, `--save-every`, `--log-every`, `--seed`.
-- `--dtype` — load dtype; in FSDP trainer also determines projector dtype.
+## Prompts used for CoT generation
 
----
+### System prompt (with inlined example)
+```python
+You are a professional protein biologist. Your task is to generate a natural, concise, and biologically accurate description of a protein based **only** on its amino-acid sequence.
+```
 
-## Troubleshooting
-- **Slot not found**: verify `--prot-slot` / `--stru-slot` match the ckpt layout; otherwise encoder stays random‑init (warning printed).
-- **OOM**: for large LLMs use FSDP full‑shard with `bf16`, increase `--accum-steps`, reduce `--max-len`, or switch to the CPU‑offload trainer and/or 8‑bit optimizer.
-- **dtype mismatch**: keep `--dtype` consistent with Accelerate’s `mixed_precision`. The FSDP trainer instantiates the projector in the LLM’s dtype to avoid matmul errors.
-- **No supervised tokens**: ensure responses are non‑empty; the prompt (and its EOS) is fully masked in labels.
+### Example:
+```python
+Protein UniProt: {ex_uid}
+Protein sequence: {trunc(ex_seq, 1200)}
+Answer: <answer> {ex_gt} </answer>
+```
+### Now try this:
+Given ONLY the sequence, first think step by step about plausible features (signal peptides, transmembrane helices, repeats, low-complexity segments, catalytic motifs/domains, localization signals), then produce a polished 2–4 sentence description.
 
----
+Your final answer **must** be returned in the format:
+```python
+<thinking>
+[steps: Your reasoning steps using sequence-derived evidence]
+</thinking>
 
-starting command: based on python 3.10
+<answer>
+[2–4 sentences; A natural, concise scientific description of the protein]
+</answer>
+```
 
-!nvidia-smi
-%pip -q install --upgrade pip
-%pip install -q --index-url https://download.pytorch.org/whl/cu126 \
-  torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0
-%pip -q install transformers==4.56.1 huggingface_hub==0.35.0 tqdm safetensors
+### User message template (fixed-answer CoT run)
+```python
+Protein UniProt: {uniprot_id}
+Protein sequence (truncated to 2000 aa if long):
+{trunc(seq, 2000)}
+
+<thinking>
+[Your reasoning steps using sequence-derived evidence]
+</thinking>
+
+<answer>
+{ground_truth}
+</answer>
+```
+
+### Result CoT example
+```jsonl
+{
+  "response": "<thinking>\n- Sequence length ~246 aa (exact shown ~246), typical size of 14-3-3 proteins (~246–255 aa).\n- N-terminal region begins MDKSELVQKAKLSEQAERY... matches highly conserved 14-3-3 consensus N-terminus (acidic/charged helix).\n- Overall composition: acidic and helical-favoring residues, no signal peptide or transmembrane segments → cytosolic.\n- Contains conserved motifs and residues characteristic of 14-3-3: charged ridge and amphipathic grooves for phospho-peptide binding.\n- Sequence lacks signal peptides, targeting peptides, or enzymatic catalytic motifs, consistent with a scaffold/adaptor role.\n</thinking>\n\n<answer>\nProbable 14-3-3 family adaptor protein (~246 aa) that resides in the cytosol and binds phosphoserine/phosphothreonine motifs in diverse client proteins. Functions as a dimeric scaffold to modulate target localization, stability and activity in multiple signaling pathways. Belongs to the 14-3-3 protein family.\n</answer>"
+}
+```
+Thinking:
+
+Sequence length ~246 aa (exact shown ~246), typical size of 14-3-3 proteins (~246–255 aa).
+N-terminal region begins MDKSELVQKAKLSEQAERY... matches highly conserved 14-3-3 consensus N-terminus (acidic/charged helix).
+Overall composition: acidic and helical-favoring residues, no signal peptide or transmembrane segments → cytosolic.
+Contains conserved motifs and residues characteristic of 14-3-3: charged ridge and amphipathic grooves for phospho-peptide binding.\n- Sequence lacks signal peptides, targeting peptides, or enzymatic catalytic motifs, consistent with a scaffold/adaptor role.
+
+Answer:
+
+Probable 14-3-3 family adaptor protein (~246 aa) that resides in the cytosol and binds phosphoserine/phosphothreonine motifs in diverse client proteins. Functions as a dimeric scaffold to modulate target localization, stability and activity in multiple signaling pathways. Belongs to the 14-3-3 protein family.
+
+### Prompt used for training
+
+**Training JSONL schema (example)**
+
+```jsonl
+{"prompt": "You are a professional protein biologist. Based only on the provided inputs, produce a natural, concise, and biologically accurate description of the protein. First reason step by step inside a <thinking> block using sequence-derived evidence and structural cues, then provide the final 2–4 sentence description inside an <answer> block.", "response": "<thinking>…</thinking>\n\n<answer>…</answer>", "aa_seq": "…", "stru_str": "…", "uniprot_id": "…", "caption": "…", "_af2_pdb_path": "…", "_3di_chain_meta": [...]}
+```
+
