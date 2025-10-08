@@ -2,7 +2,26 @@ from datasets import load_dataset
 from rllm.data.dataset import DatasetRegistry
 
 
-def prepare_protein_data():
+def prepare_rlvr_data(dataset_name="thermostability"):
+    # Load your dataset (JSON/JSONL file or HF Hub repo)
+    dataset = load_dataset("fangwu97/ProteinData", name=dataset_name)
+
+    # Define preprocessing
+    def preprocess_fn(example, idx):
+        return {"prompt": example.get("prompt", ""), "aa_seq": example["sequence"], "split": example["set"], "ground_truth": example["target"], }
+
+    dataset = dataset.map(preprocess_fn, with_indices=True)
+    train_dataset = dataset[dataset['split'] != 'test']
+    test_dataset = dataset[dataset['split'] == 'test']
+
+    # Register datasets
+    train_dataset = DatasetRegistry.register_dataset(f"protein_train_{dataset_name}", train_dataset, "train")
+    test_dataset = DatasetRegistry.register_dataset(f"protein_test_{dataset_name}", test_dataset, "test")
+
+    return train_dataset, test_dataset
+
+
+def prepare_sft_data():
     # Load your dataset (JSON/JSONL file or HF Hub repo)
     dataset = load_dataset("json", data_files="proteins.jsonl")["train"]
 
@@ -27,6 +46,6 @@ def prepare_protein_data():
 
 
 if __name__ == "__main__":
-    train_dataset, test_dataset = prepare_protein_data()
+    train_dataset, test_dataset = prepare_rlvr_data()
     print(train_dataset.get_data_path())
     print(test_dataset.get_data_path())

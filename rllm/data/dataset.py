@@ -240,9 +240,7 @@ class DatasetRegistry:
             return None
 
         data = pl.read_parquet(dataset_path).to_dicts()
-
         logger.info(f"Loaded dataset '{name}' split '{split}' with {len(data)} examples.")
-
         return Dataset(data=data, name=name, split=split)
 
     @classmethod

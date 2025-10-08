@@ -13,6 +13,7 @@ MODEL_PATH=deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B   # todo: change the model 
 
 python3 -m examples.deepscaler.train_deepscaler \
     algorithm.adv_estimator=grpo \
+    data.dataset_name=thermostability \
     data.train_batch_size=128 \
     data.val_batch_size=30 \
     data.max_prompt_length=2048 \
@@ -55,7 +56,7 @@ python3 -m examples.deepscaler.train_deepscaler \
     trainer.critic_warmup=0 \
     trainer.logger=['console','wandb'] \
     trainer.project_name='rllm-agent' \
-    trainer.experiment_name='deepscaler-1.5b-8k' \
+    trainer.experiment_name='deepprotein-1.5b-8k' \
     trainer.val_before_train=True \
     trainer.n_gpus_per_node=8 \
     trainer.nnodes=1 \
