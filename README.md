@@ -293,3 +293,39 @@ accelerate launch --config_file accelerate_cpu_offload_bf16.yaml train_prefix_qw
 *This variant performs selected computations/parameters on CPU to fit larger models; expect slower throughput.*
 
 ---
+
+## Prompts used for CoT generation
+
+### System prompt (with inlined example)
+You are a professional protein biologist. Your task is to generate a natural, concise, and biologically accurate description of a protein based **only** on its amino-acid sequence.
+
+### Example:
+Protein UniProt: {ex_uid}
+Protein sequence: {trunc(ex_seq, 1200)}
+Answer: <answer> {ex_gt} </answer>
+
+### Now try this:
+Given ONLY the sequence, first think step by step about plausible features (signal peptides, transmembrane helices, repeats, low-complexity segments, catalytic motifs/domains, localization signals), then produce a polished 2–4 sentence description.
+
+Your final answer **must** be returned in the format:
+<thinking>
+[steps: Your reasoning steps using sequence-derived evidence]
+</thinking>
+
+<answer>
+[2–4 sentences; A natural, concise scientific description of the protein]
+</answer>
+
+
+### User message template (fixed-answer CoT run)
+Protein UniProt: {uniprot_id}
+Protein sequence (truncated to 2000 aa if long):
+{trunc(seq, 2000)}
+
+<thinking>
+[Your reasoning steps using sequence-derived evidence]
+</thinking>
+
+<answer>
+{ground_truth}
+</answer>
