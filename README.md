@@ -297,17 +297,21 @@ accelerate launch --config_file accelerate_cpu_offload_bf16.yaml train_prefix_qw
 ## Prompts used for CoT generation
 
 ### System prompt (with inlined example)
+```python
 You are a professional protein biologist. Your task is to generate a natural, concise, and biologically accurate description of a protein based **only** on its amino-acid sequence.
+```
 
 ### Example:
+```python
 Protein UniProt: {ex_uid}
 Protein sequence: {trunc(ex_seq, 1200)}
 Answer: <answer> {ex_gt} </answer>
-
+```
 ### Now try this:
 Given ONLY the sequence, first think step by step about plausible features (signal peptides, transmembrane helices, repeats, low-complexity segments, catalytic motifs/domains, localization signals), then produce a polished 2–4 sentence description.
 
 Your final answer **must** be returned in the format:
+```python
 <thinking>
 [steps: Your reasoning steps using sequence-derived evidence]
 </thinking>
@@ -315,9 +319,10 @@ Your final answer **must** be returned in the format:
 <answer>
 [2–4 sentences; A natural, concise scientific description of the protein]
 </answer>
-
+```
 
 ### User message template (fixed-answer CoT run)
+```python
 Protein UniProt: {uniprot_id}
 Protein sequence (truncated to 2000 aa if long):
 {trunc(seq, 2000)}
@@ -329,3 +334,30 @@ Protein sequence (truncated to 2000 aa if long):
 <answer>
 {ground_truth}
 </answer>
+```
+
+### Result CoT example
+```jsonl
+{
+  "response": "<thinking>\n- Sequence length ~246 aa (exact shown ~246), typical size of 14-3-3 proteins (~246–255 aa).\n- N-terminal region begins MDKSELVQKAKLSEQAERY... matches highly conserved 14-3-3 consensus N-terminus (acidic/charged helix).\n- Overall composition: acidic and helical-favoring residues, no signal peptide or transmembrane segments → cytosolic.\n- Contains conserved motifs and residues characteristic of 14-3-3: charged ridge and amphipathic grooves for phospho-peptide binding.\n- Sequence lacks signal peptides, targeting peptides, or enzymatic catalytic motifs, consistent with a scaffold/adaptor role.\n</thinking>\n\n<answer>\nProbable 14-3-3 family adaptor protein (~246 aa) that resides in the cytosol and binds phosphoserine/phosphothreonine motifs in diverse client proteins. Functions as a dimeric scaffold to modulate target localization, stability and activity in multiple signaling pathways. Belongs to the 14-3-3 protein family.\n</answer>"
+}
+```
+Thinking:
+
+Sequence length ~246 aa (exact shown ~246), typical size of 14-3-3 proteins (~246–255 aa).
+N-terminal region begins MDKSELVQKAKLSEQAERY... matches highly conserved 14-3-3 consensus N-terminus (acidic/charged helix).
+Overall composition: acidic and helical-favoring residues, no signal peptide or transmembrane segments → cytosolic.
+Contains conserved motifs and residues characteristic of 14-3-3: charged ridge and amphipathic grooves for phospho-peptide binding.\n- Sequence lacks signal peptides, targeting peptides, or enzymatic catalytic motifs, consistent with a scaffold/adaptor role.
+
+Answer:
+
+Probable 14-3-3 family adaptor protein (~246 aa) that resides in the cytosol and binds phosphoserine/phosphothreonine motifs in diverse client proteins. Functions as a dimeric scaffold to modulate target localization, stability and activity in multiple signaling pathways. Belongs to the 14-3-3 protein family.
+
+### Prompt used for training
+
+**Training JSONL schema (example)**
+
+```jsonl
+{"prompt": "You are a professional protein biologist. Based only on the provided inputs, produce a natural, concise, and biologically accurate description of the protein. First reason step by step inside a <thinking> block using sequence-derived evidence and structural cues, then provide the final 2–4 sentence description inside an <answer> block.", "response": "<thinking>…</thinking>\n\n<answer>…</answer>", "aa_seq": "…", "stru_str": "…", "uniprot_id": "…", "caption": "…", "_af2_pdb_path": "…", "_3di_chain_meta": [...]}
+```
+
