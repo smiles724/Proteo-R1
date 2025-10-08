@@ -1,0 +1,18 @@
+# Environment:
+# Python 3.13.2
+# torch 2.8.0+cu128
+
+# Core
+transformers==4.57.0
+tokenizers==0.22.1
+safetensors==0.6.2
+huggingface-hub==0.35.3
+einops==0.8.1
+tqdm==4.67.1
+wandb==0.22.2
+ninja==1.13.0
+
+# Optional (enable if you use them)
+# pandas==2.3.3          # if your loader uses pandas
+# sentencepiece==0.2.1   # if you need SentencePiece-based tokenizers
+# scipy==1.16.2          # if you compute stats/metrics needing SciPy
