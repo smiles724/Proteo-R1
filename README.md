@@ -117,7 +117,7 @@ pip install -r requirements.txt
 This repo provides three entrypoints:
 
 - **`train_prefix_qwen.py`** — single‑GPU trainer (gradient accumulation; optional encoder finetune).  
-- **`train_prefix_qwen_fsdp_vanilla.py`** — multi‑GPU trainer using only FSDP  
+- **`train_prefix_qwen_fsdp_vanilla_ckf.py`** — multi‑GPU trainer using only FSDP  
 - **`train_prefix_qwen_fsdp_offload1.py`** — FSDP full‑shard with **CPU offload** (plus optional 8‑bit/Adafactor optimizers). (Haven't test yet)
 
 ---
@@ -138,7 +138,7 @@ This repo provides three entrypoints:
 protein_encoder.py                 # sequence encoder wrapper
 structure_encoder.py               # 3Di structure encoder wrapper
 train_prefix_qwen.py               # single‑GPU trainer
-train_prefix_qwen_fsdp_vanilla.py  # multi‑GPU trainer (FSDP)
+train_prefix_qwen_fsdp_vanilla_ckf.py  # multi‑GPU trainer (FSDP)
 train_prefix_qwen_fsdp_offload1.py # multi‑GPU trainer (FSDP + CPU offload)
 ```
 
@@ -236,7 +236,7 @@ python train_prefix_qwen.py \
 
 ### B) Multi‑GPU (FSDP) (Main training file)
 ```bash
-torchrun --standalone --nproc_per_node="${NPROC_PER_NODE}" train_prefix_qwen_fsdp_vanilla.py \
+torchrun --standalone --nproc_per_node="${NPROC_PER_NODE}" train_prefix_qwen_fsdp_vanilla_ckf.py \
   --train-file level2_10k_train.jsonl \
   --model-name Qwen/Qwen2.5-14B-Instruct \
   --protein-config   esm2_t33_650M_UR50D \
