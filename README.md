@@ -223,8 +223,8 @@ python train_prefix_qwen.py \
   --train-file /data/train.jsonl \
   --val-file   /data/val.jsonl \
   --model-name Qwen/Qwen2.5-0.5B-Instruct \
-  --protein-config   facebook/esm2_t12_35M_UR50D \
-  --structure-config facebook/esm2_t12_35M_UR50D \
+  --protein-config   esm2_t33_650M_UR50D \
+  --structure-config foldseek_t30_150M \
   --protrek-ckpt     /weights/ProTrek_35M.pt \
   --prot-slot 1 --stru-slot 3 \
   --dtype fp32 \
@@ -281,8 +281,8 @@ fsdp_config:
 accelerate launch --config_file accelerate_cpu_offload_bf16.yaml train_prefix_qwen_fsdp_offload1.py \
   --train-file /data/train.jsonl \
   --model-name Qwen/Qwen2.5-7B-Instruct \
-  --protein-config   facebook/esm2_t12_35M_UR50D \
-  --structure-config facebook/esm2_t12_35M_UR50D \
+  --protein-config   esm2_t33_650M_UR50D \
+  --structure-config foldseek_t30_150M \
   --protrek-ckpt     /weights/ProTrek_35M.pt \
   --prot-slot 1 --stru-slot 3 \
   --prefix-len 4 --batch-size 1 --accum-steps 8 \
