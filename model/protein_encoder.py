@@ -1,98 +1,147 @@
 import torch
-
-from tqdm import tqdm
+import torch.nn as nn
 from torch.nn.functional import normalize
+from torch.nn.utils.rnn import pad_sequence
+from typing import List, Tuple, Optional, Union
+
 from transformers import EsmConfig, EsmForMaskedLM, EsmTokenizer
 
 
-class ProteinEncoder(torch.nn.Module):
-    def __init__(self,
-                 config_path: str,
-                 out_dim: int,
-                 load_pretrained: bool = True,
-                 gradient_checkpointing: bool = False):
-        """
-        Args:
-            config_path: Path to the config file
-            
-            out_dim    : Output dimension of the protein representation
-            
-            load_pretrained: Whether to load pretrained weights
-            
-            gradient_checkpointing: Whether to use gradient checkpointing
-        """
-        super().__init__()
-        config = EsmConfig.from_pretrained(config_path)
-        if load_pretrained:
-            self.model = EsmForMaskedLM.from_pretrained(config_path)
-        else:
-            self.model = EsmForMaskedLM(config)
-        self.out = torch.nn.Linear(config.hidden_size, out_dim)
-        
-        # Set gradient checkpointing
-        self.model.esm.encoder.gradient_checkpointing = gradient_checkpointing
-        
-        # Remove contact head
-        self.model.esm.contact_head = None
-        
-        # Remove position embedding if the embedding type is ``rotary``
-        if config.position_embedding_type == "rotary":
-            self.model.esm.embeddings.position_embeddings = None
-        
-        self.tokenizer = EsmTokenizer.from_pretrained(config_path)
-    
-    def get_repr(self, proteins: list, batch_size: int = 64, verbose: bool = False) -> torch.Tensor:
-        """
-        Compute protein representation for the given proteins
-        Args:
-            protein: A list of protein sequences
-            batch_size: Batch size for inference
-            verbose: Whether to print progress
-        """
-        device = next(self.parameters()).device
-        
-        if isinstance(proteins, str):
-            proteins = [proteins]
-        
-        protein_repr = []
-        if verbose:
-            iterator = tqdm(range(0, len(proteins), batch_size), desc="Computing protein embeddings")
-        else:
-            iterator = range(0, len(proteins), batch_size)
-            
-        for i in iterator:
-            protein_inputs = self.tokenizer.batch_encode_plus(proteins[i:i + batch_size],
-                                                              return_tensors="pt",
-                                                              padding=True)
-            protein_inputs = {k: v.to(device) for k, v in protein_inputs.items()}
-            output, _ = self.forward(protein_inputs)
-            
-            protein_repr.append(output)
-        
-        protein_repr = torch.cat(protein_repr, dim=0)
-        return normalize(protein_repr, dim=-1)
+class ProteinEncoder(nn.Module):
+    """
+    HuggingFace ESM encoder wrapper with proper padding/masking.
 
-    def forward(self, inputs: dict, get_mask_logits: bool = False):
+    Key behavior:
+      - Uses HF EsmTokenizer/EsmForMaskedLM
+      - Computes per-sequence lengths from attention_mask
+      - For residue-level reps, slices out BOS (CLS) at index 0 and EOS (SEP) at the last index
+      - Pads variable-length residue sequences to a uniform length and returns (padded_reprs, mask)
+      - Optionally returns masked LM logits for <mask> tokens
+
+    Returns:
+      If seq_level_reprs is False (default): (padded_reprs, mask, mask_logits)
+        - padded_reprs: (B, L_max_residues, D)
+        - mask:         (B, L_max_residues) boolean, True for valid residues
+        - mask_logits:  (B, L_full, V) or None
+
+      If seq_level_reprs is True: (seq_reprs, None, mask_logits)
+        - seq_reprs:    (B, D) averaged over residues (excl. BOS/EOS)
+    """
+
+    def __init__(self, config_path: str, out_dim: int, load_pretrained: bool = True, gradient_checkpointing: bool = False, seq_level_reprs: bool = False, ):
+        super().__init__()
+        self.seq_level_reprs = seq_level_reprs
+
+        self.tokenizer: EsmTokenizer = EsmTokenizer.from_pretrained(config_path)
+        if load_pretrained:
+            self.model: EsmForMaskedLM = EsmForMaskedLM.from_pretrained(config_path)
+        else:
+            cfg = EsmConfig.from_pretrained(config_path)
+            self.model = EsmForMaskedLM(cfg)
+        if gradient_checkpointing:
+            self.model.gradient_checkpointing_enable()
+
+        hidden = self.model.config.hidden_size
+        self.proj = nn.Linear(hidden, out_dim, bias=False)
+
+        # Cached special IDs
+        self.pad_id = self.tokenizer.pad_token_id
+        self.bos_id = self.tokenizer.cls_token_id
+        self.eos_id = self.tokenizer.sep_token_id
+
+    @torch.no_grad()
+    def _encode_batch(self, sequences: List[str], return_tensors: str = "pt", device: Optional[Union[str, torch.device]] = None, **encode_kwargs, ) -> Tuple[dict, torch.Tensor]:
         """
-        Encode protein sequence into protein representation
+        Tokenize and run the ESM encoder. Returns (batch_dict, last_hidden_state).
+        batch_dict has: input_ids, attention_mask, (token_type_ids if any).
+        last_hidden_state: (B, L_full, H)
+        """
+        batch = self.tokenizer.batch_encode_plus(sequences, add_special_tokens=True,  # ensures BOS/EOS
+                                                 padding=True, truncation=False, return_tensors=return_tensors, **encode_kwargs, )
+        if device is not None:
+            batch = {k: v.to(device) for k, v in batch.items()}
+        outputs = self.model.esm(**batch, output_hidden_states=False, return_dict=True)
+        last_hidden_state = outputs.last_hidden_state  # (B, L_full, H)
+        return batch, last_hidden_state
+
+    def forward(self, sequences: List[str], get_mask_logits: bool = False, device: Optional[Union[str, torch.device]] = None, ):
+        """
         Args:
-            inputs: A dictionary containing the following keys:
-                - input_ids: [batch, seq_len]
-                - attention_mask: [batch, seq_len]
-            get_mask_logits: Whether to return the logits for masked tokens
+            sequences: list of raw amino-acid sequences (can include <mask> tokens as in HF ESM)
+            get_mask_logits: if True, also return MLM logits over the vocabulary for each token
+            device: torch device to place tensors on
 
         Returns:
-            protein_repr: [batch, protein_repr_dim]
-            mask_logits : [batch, seq_len, vocab_size]
+            See class docstring.
         """
-        last_hidden_state = self.model.esm(**inputs).last_hidden_state
-        reprs = last_hidden_state[:, 0, :]
-        reprs = self.out(reprs)
+        batch, last_hidden_state = self._encode_batch(sequences, device=device)
 
-        # Get logits for masked tokens
+        # (B,) lengths including BOS/EOS tokens, derived from attention_mask
+        # NOTE: attention_mask==1 for real tokens incl. special tokens
+        full_lens = batch["attention_mask"].sum(dim=1)  # shape (B,)
+
+        # Build per-sequence residue-only slices by removing BOS/EOS
+        # Residue length = full_len - 2 (clamped at >= 0)
+        residue_lens = (full_lens - 2).clamp_min(0)
+
+        B = last_hidden_state.size(0)
+        H = last_hidden_state.size(-1)
+
+        # Collect variable-length residue reps (exclude BOS at 0 and EOS at full_len-1)
+        residue_reprs = []
+        start = 1
+        for i in range(B):
+            L_i = int(full_lens[i].item())
+            end = max(start, L_i - 1)  # exclusive, see ESM official doc
+            residue_reprs.append(last_hidden_state[i, start:end, :])
+
+        if self.seq_level_reprs:
+            # Average across valid residues for sequence-level representation (handle empty safely)
+            seq_reprs = []
+            for i in range(B):
+                ri = residue_reprs[i]
+                if ri.numel() == 0:
+                    # No residues (edge case) -> zero vector
+                    seq_reprs.append(torch.zeros(H, device=ri.device, dtype=ri.dtype))
+                else:
+                    seq_reprs.append(ri.mean(dim=0))
+            seq_reprs = torch.stack(seq_reprs, dim=0)  # (B, H)
+            seq_reprs = self.proj(seq_reprs)  # (B, out_dim)
+            mask_out = None
+            padded_out = seq_reprs
+        else:
+            # Pad variable-length residue sequences to a uniform length
+            padded = pad_sequence(residue_reprs, batch_first=True)  # (B, L_max_res, H)
+            # Build mask over residues (True for valid residues)
+            Lmax = padded.size(1)
+            # mask[i, j] = j < residue_lens[i]
+            idxs = torch.arange(Lmax, device=padded.device).unsqueeze(0).expand(B, Lmax)
+            mask = idxs < residue_lens.unsqueeze(1)
+
+            # Optional: L2-normalize token embeddings, then zero-out pads via mask
+            padded = normalize(padded, dim=-1)
+            padded = padded * mask.unsqueeze(-1)
+
+            padded_out = self.proj(padded)  # (B, L_max_res, out_dim)
+            mask_out = mask
+
+        # Optionally compute logits over vocab for every token (B, L_full, V)
         if get_mask_logits:
             mask_logits = self.model.lm_head(last_hidden_state)
         else:
             mask_logits = None
 
-        return reprs, mask_logits
+        # Return (representations, mask, logits) where mask is None for seq-level mode
+        return padded_out, mask_out, mask_logits
+
+
+if __name__ == "__main__":
+    # Example usage
+    enc = ProteinEncoder(config_path="facebook/esm2_t33_650M_UR50D", out_dim=256, load_pretrained=True, gradient_checkpointing=False, seq_level_reprs=False, )
+    seqs = ["MKTVRQERLKSIVRILERSKEPVSGAQLAEELSVSRQVIVQDIAYLRSLGYNIVATPRGYVLAGG", "KALTARQQEVFDLIRD<mask>ISQTGMPPTRAEIAQRLGFRSPNAAEEHLKALARKGVIEIVSGASRGIRLLQEE",
+            "K A <mask> I S Q", ]
+    reps, mask, logits = enc(seqs, get_mask_logits=True)
+    print("Representations:", reps.shape)
+    print("Mask:", mask.shape if mask is not None else None)
+    if logits is not None:
+        print("Mask logits:", logits.shape)
