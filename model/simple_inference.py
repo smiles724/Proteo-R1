@@ -10,7 +10,7 @@ from proteinLLM_pllm import PLLM
 
 def main():
     # Configuration
-    MODEL_PATH = "/mnt/efs/erran/rllm_v02/pllm"
+    MODEL_PATH = "./pllm"  # Relative to current directory
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
     
     print(f"Device: {DEVICE}")

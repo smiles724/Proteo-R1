@@ -133,13 +133,13 @@ class PLLM(nn.Module):
         self.structure_config = structure_config
         self.train_encoders = train_encoders
         self.proj_hid = proj_hid
+        # Note: We don't store protrek_ckpt because we save encoder weights directly
 
         # Encoders (arch from configs; weights from ProTrek slots below)
         self.protein_encoder = protein_encoder_mod.ProteinEncoder(protein_config, out_dim=1024, load_pretrained=False)
         self.structure_encoder = structure_encoder_mod.StructureEncoder(structure_config, out_dim=1024, load_pretrained=False)
 
         # ---- ProTrek slot-based loading ----
-        protrek_ckpt = '/mnt/efs/erran/rllm_v02/ProTrek_650M/ProTrek_650M.pt'
         if protrek_ckpt and os.path.exists(protrek_ckpt):
             sd_raw = torch.load(protrek_ckpt, map_location="cpu")
             sd = sd_raw.get("model", sd_raw.get("state_dict", sd_raw))
@@ -268,8 +268,10 @@ class PLLM(nn.Module):
                 return x
             return _resolve_rel(base_dir, x)
 
+        # Note: We don't pass protrek_ckpt here because encoder weights are loaded from model.safetensors
         return cls(model_name=cfg.get("base_model_name_or_path", None), protein_config=_res(cfg.get("protein_config", None)),
-                   structure_config=_res(cfg.get("structure_config", None)), single_token_prefix=cfg.get("single_token_prefix", False), prefix_len=int(cfg.get("prefix_len", 4)),
+                   structure_config=_res(cfg.get("structure_config", None)), protrek_ckpt=None,  # Weights loaded from safetensors
+                   single_token_prefix=cfg.get("single_token_prefix", False), prefix_len=int(cfg.get("prefix_len", 4)),
                    proj_hid=int(cfg.get("proj_hid", 1024)), train_encoders=bool(cfg.get("train_encoders", True)), dtype_str="auto", )
 
     def save_pretrained(self, save_directory: str):
@@ -295,10 +297,12 @@ class PLLM(nn.Module):
         cfg = self._export_config()
         prot_rel = _maybe_copy_into(p, cfg.get("protein_config", None), "protein_config.json")
         stru_rel = _maybe_copy_into(p, cfg.get("structure_config", None), "structure_config.json")
+        
         if prot_rel is not None:
             cfg["protein_config"] = prot_rel
         if stru_rel is not None:
             cfg["structure_config"] = stru_rel
+        # Note: We don't copy protrek_ckpt - encoder weights are already in model.safetensors
 
         with open(p / "config.json", "w") as f:
             json.dump(cfg, f, indent=2)
