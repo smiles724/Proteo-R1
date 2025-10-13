@@ -103,6 +103,22 @@ In the data preprocessing folder, there are **four Colab notebooks** that form a
 - **Training Env**
 - All required package/version and python torch version are all in requirement.txt
 
+- **Encoder Weight**
+- To load encoders weight, First download weight from Protrek HF repo.
+- https://huggingface.co/westlake-repl/ProTrek_35M
+- https://huggingface.co/westlake-repl/ProTrek_650M
+- And set:
+- 35M Encoder
+- --protein_config "/protrek/weights/ProTrek_35M/esm2_t12_35M_UR50D" \
+  --structure_config "/protrek/weights/ProTrek_35M/foldseek_t12_35M" \
+  --protrek_ckpt "/protrek/weights/ProTrek_35M/ProTrek_35M.pt" \
+  
+- 650M Encoder
+  
+  --protein_config "/protrek/weights/ProTrek_35M/esm2_t33_650M_UR50D" \
+  --structure_config "/protrek/weights/ProTrek_35M/foldseek_t30_150M" \
+  --protrek_ckpt "/protrek/weights/ProTrek_35M/ProTrek_650M.pt" \
+
 ```python
 python -m venv .venv
 source .venv/bin/activate
@@ -117,7 +133,7 @@ pip install -r requirements.txt
 This repo provides three entrypoints:
 
 - **`train_prefix_qwen.py`** — single‑GPU trainer (gradient accumulation; optional encoder finetune).  
-- **`train_prefix_qwen_fsdp_vanilla.py`** — multi‑GPU trainer using only FSDP  
+- **`train_prefix_qwen_fsdp_vanilla_ckf.py`** — multi‑GPU trainer using only FSDP  
 - **`train_prefix_qwen_fsdp_offload1.py`** — FSDP full‑shard with **CPU offload** (plus optional 8‑bit/Adafactor optimizers). (Haven't test yet)
 
 ---
@@ -138,7 +154,7 @@ This repo provides three entrypoints:
 protein_encoder.py                 # sequence encoder wrapper
 structure_encoder.py               # 3Di structure encoder wrapper
 train_prefix_qwen.py               # single‑GPU trainer
-train_prefix_qwen_fsdp_vanilla.py  # multi‑GPU trainer (FSDP)
+train_prefix_qwen_fsdp_vanilla_ckf.py  # multi‑GPU trainer (FSDP)
 train_prefix_qwen_fsdp_offload1.py # multi‑GPU trainer (FSDP + CPU offload)
 ```
 
@@ -236,7 +252,7 @@ python train_prefix_qwen.py \
 
 ### B) Multi‑GPU (FSDP) (Main training file)
 ```bash
-torchrun --standalone --nproc_per_node="${NPROC_PER_NODE}" train_prefix_qwen_fsdp_vanilla.py \
+torchrun --standalone --nproc_per_node="${NPROC_PER_NODE}" train_prefix_qwen_fsdp_vanilla_ckf.py \
   --train-file level2_10k_train.jsonl \
   --model-name Qwen/Qwen2.5-14B-Instruct \
   --protein-config   esm2_t33_650M_UR50D \
