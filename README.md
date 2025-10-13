@@ -103,6 +103,19 @@ In the data preprocessing folder, there are **four Colab notebooks** that form a
 - **Training Env**
 - All required package/version and python torch version are all in requirement.txt
 
+- **Encoder Weight**
+- To load encoders weight, First download weight from Protrek HF repo.
+- https://huggingface.co/westlake-repl/ProTrek_35M
+- https://huggingface.co/westlake-repl/ProTrek_650M
+- And set:
+- --protein_config "/protrek/weights/ProTrek_35M/esm2_t12_35M_UR50D" \
+  --structure_config "/protrek/weights/ProTrek_35M/foldseek_t12_35M" \
+  --protrek_ckpt "/protrek/weights/ProTrek_35M/ProTrek_35M.pt" \
+  (Or 650M folder)
+  --protein_config "/protrek/weights/ProTrek_35M/esm2_t33_650M_UR50D" \
+  --structure_config "/protrek/weights/ProTrek_35M/foldseek_t30_150M" \
+  --protrek_ckpt "/protrek/weights/ProTrek_35M/ProTrek_650M.pt" \
+
 ```python
 python -m venv .venv
 source .venv/bin/activate
