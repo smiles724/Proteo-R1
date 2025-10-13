@@ -1,7 +1,8 @@
+import os
 import argparse
 import torch
 from transformers import AutoTokenizer
-from model.proteinLLM_pllm import PLLM
+from proteinLLM_pllm import PLLM
 
 
 # Helper: build a tiny SFT batch (mask prompt + EOS with -100)
@@ -69,6 +70,7 @@ if __name__ == "__main__":
     with torch.no_grad():
         out = model(input_ids=batch["input_ids"], attention_mask=batch["attention_mask"], labels=batch["labels"], aa_seq=aa_list, stru_str=stru_list, )
     print("Forward OK. loss =", float(out.loss))
+    model.save_pretrained("./pllm")
 
     # Optional: show prefix shapes
     try:
