@@ -137,7 +137,7 @@ class ProteinEncoder(nn.Module):
 
 if __name__ == "__main__":
     # Example usage
-    enc = ProteinEncoder(config_path="facebook/esm2_t33_650M_UR50D", out_dim=256, load_pretrained=True, gradient_checkpointing=False, seq_level_reprs=False, )
+    enc = ProteinEncoder(config_path="/mnt/efs/erran/rllm_v02/ProTrek_650M/esm2_t33_650M_UR50D", out_dim=256, load_pretrained=True, gradient_checkpointing=False, seq_level_reprs=False, )
     seqs = ["MKTVRQERLKSIVRILERSKEPVSGAQLAEELSVSRQVIVQDIAYLRSLGYNIVATPRGYVLAGG", "KALTARQQEVFDLIRD<mask>ISQTGMPPTRAEIAQRLGFRSPNAAEEHLKALARKGVIEIVSGASRGIRLLQEE",
             "K A <mask> I S Q", ]
     reps, mask, logits = enc(seqs, get_mask_logits=True)

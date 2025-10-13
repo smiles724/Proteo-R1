@@ -49,12 +49,26 @@ def _maybe_copy_into(dirpath: Path, src_path, dst_name):
     if not src_path:
         return None
     try:
-        src_path = str(src_path)
-        dst = dirpath / dst_name
-        shutil.copyfile(src_path, dst)
-        return dst_name  # store relative path
-    except Exception:
-        return src_path  # fallback if copy fails
+        src_path_obj = Path(src_path)
+        
+        # If it's a directory, copy the entire directory
+        if src_path_obj.is_dir():
+            dst = dirpath / dst_name.replace('.json', '')  # Remove .json extension for directories
+            if dst.exists():
+                shutil.rmtree(dst)
+            shutil.copytree(src_path_obj, dst)
+            return dst_name.replace('.json', '')  # Return just the directory name (relative to dirpath)
+        # If it's a file, copy the file
+        elif src_path_obj.is_file():
+            dst = dirpath / dst_name
+            shutil.copyfile(src_path, dst)
+            return dst_name  # store relative path
+        else:
+            # If path doesn't exist, store absolute path
+            return str(src_path_obj.absolute())
+    except Exception as e:
+        # Fallback: store absolute path
+        return str(Path(src_path).absolute())
 
 
 def _pllm_gather_custom_state_dict(model: "PLLM"):
@@ -113,12 +127,19 @@ class PLLM(nn.Module):
 
         self.hidden_size = self.llm.config.hidden_size
         self.prefix_len = 1 if single_token_prefix else prefix_len
+        
+        # Store config paths for serialization
+        self.protein_config = protein_config
+        self.structure_config = structure_config
+        self.train_encoders = train_encoders
+        self.proj_hid = proj_hid
 
         # Encoders (arch from configs; weights from ProTrek slots below)
         self.protein_encoder = protein_encoder_mod.ProteinEncoder(protein_config, out_dim=1024, load_pretrained=False)
         self.structure_encoder = structure_encoder_mod.StructureEncoder(structure_config, out_dim=1024, load_pretrained=False)
 
         # ---- ProTrek slot-based loading ----
+        protrek_ckpt = '/mnt/efs/erran/rllm_v02/ProTrek_650M/ProTrek_650M.pt'
         if protrek_ckpt and os.path.exists(protrek_ckpt):
             sd_raw = torch.load(protrek_ckpt, map_location="cpu")
             sd = sd_raw.get("model", sd_raw.get("state_dict", sd_raw))
@@ -206,7 +227,7 @@ class PLLM(nn.Module):
         # Per-token MLP to LLM hidden size
         return self.prefix_mlp(protein_tokens)  # (B, L', H)
 
-    def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor, labels: torch.Tensor, aa_seq: List[Optional[str]], stru_str: List[Optional[str]], ) -> torch.Tensor:
+    def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor, labels: Optional[torch.Tensor], aa_seq: List[Optional[str]], stru_str: List[Optional[str]], ) -> torch.Tensor:
         # Text embeddings
         text_embeds = self.llm.get_input_embeddings()(input_ids)
         # Token-level protein prefix
@@ -217,9 +238,11 @@ class PLLM(nn.Module):
         inputs_embeds = torch.cat([pref, text_embeds], dim=1)  # (B, L'+T, H)
         attn = torch.cat([prot_mask.to(attention_mask.dtype), attention_mask], dim=1)
 
-        # Extend labels with -100 for prefix
-        pad = torch.full((labels.size(0), pref.size(1)), -100, dtype=labels.dtype, device=labels.device)
-        new_labels = torch.cat([pad, labels], dim=1)
+        # Extend labels with -100 for prefix (if labels provided)
+        new_labels = None
+        if labels is not None:
+            pad = torch.full((labels.size(0), pref.size(1)), -100, dtype=labels.dtype, device=labels.device)
+            new_labels = torch.cat([pad, labels], dim=1)
 
         # Qwen adds position ids internally; no manual position_ids needed
         out = self.llm(inputs_embeds=inputs_embeds, attention_mask=attn, labels=new_labels, use_cache=False)
@@ -318,5 +341,14 @@ class PLLM(nn.Module):
             model.structure_encoder.load_state_dict(se, strict=False)
         if getattr(model, "prefix_mlp", None) is not None and pm:
             model.prefix_mlp.load_state_dict(pm, strict=False)
+        
+        # Ensure dtype consistency across all components
+        llm_dtype = next(model.llm.parameters()).dtype
+        if getattr(model, "protein_encoder", None) is not None:
+            model.protein_encoder = model.protein_encoder.to(dtype=llm_dtype)
+        if getattr(model, "structure_encoder", None) is not None:
+            model.structure_encoder = model.structure_encoder.to(dtype=llm_dtype)
+        if getattr(model, "prefix_mlp", None) is not None:
+            model.prefix_mlp = model.prefix_mlp.to(dtype=llm_dtype)
 
         return model
