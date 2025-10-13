@@ -242,8 +242,8 @@ class ActorRolloutRefWorker(Worker):
             warnings.simplefilter("ignore")
 
 
-            from model.proteinLLM import BigProteinQwen
-            actor_module = BigProteinQwen(actor_model_config)  # todo: config
+            from model.proteinLLM import PLLM
+            actor_module = PLLM(actor_model_config)  # todo: config
             # torch.load()   https://huggingface.co/zzqsb/ProteinFM/tree/main/checkpoints
 
             # if type(actor_model_config) in AutoModelForVision2Seq._model_mapping.keys():

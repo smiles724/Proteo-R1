@@ -42,7 +42,7 @@ class ProteinEncoder(nn.Module):
             self.model.gradient_checkpointing_enable()
 
         hidden = self.model.config.hidden_size
-        self.proj = nn.Linear(hidden, out_dim, bias=False)
+        self.out = nn.Linear(hidden, out_dim, bias=False)
 
         # Cached special IDs
         self.pad_id = self.tokenizer.pad_token_id
@@ -106,7 +106,7 @@ class ProteinEncoder(nn.Module):
                 else:
                     seq_reprs.append(ri.mean(dim=0))
             seq_reprs = torch.stack(seq_reprs, dim=0)  # (B, H)
-            seq_reprs = self.proj(seq_reprs)  # (B, out_dim)
+            seq_reprs = self.out(seq_reprs)  # (B, out_dim)
             mask_out = None
             padded_out = seq_reprs
         else:
@@ -122,7 +122,7 @@ class ProteinEncoder(nn.Module):
             padded = normalize(padded, dim=-1)
             padded = padded * mask.unsqueeze(-1)
 
-            padded_out = self.proj(padded)  # (B, L_max_res, out_dim)
+            padded_out = self.out(padded)  # (B, L_max_res, out_dim)
             mask_out = mask
 
         # Optionally compute logits over vocab for every token (B, L_full, V)
