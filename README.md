@@ -1,142 +1,155 @@
-<div align="center">
+# protein_llm
 
-# rLLM
-
-<div>
-🚀 Reinforcement Learning for Language Agents🌟
-</div>
-</div>
-<div>
-<br>
-
-<div align="center">
-  
-[![Documentation](https://img.shields.io/badge/Documentation-black?style=for-the-badge&logo=googledocs&logoColor=white)](https://rllm-project.readthedocs.io/en/latest)
-[![Discord](https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/BDH46HT9en)
-[![Website](https://img.shields.io/badge/Site-%23000000.svg?style=for-the-badge&logo=semanticweb&logoColor=white)](https://www.agentica-project.com) 
-[![Blog](https://img.shields.io/badge/Blog-007AFF?style=for-the-badge)](https://pretty-radio-b75.notion.site/rLLM-A-Framework-for-Post-Training-Language-Agents-21b81902c146819db63cd98a54ba5f31)
-[![Hugging Face Collection](https://img.shields.io/badge/Agentica-fcd022?style=for-the-badge&logo=huggingface&logoColor=000&labelColor)](https://huggingface.co/agentica-org)
-
-</div>
-
-</div>
-
-rLLM is an open-source framework for post-training language agents via reinforcement learning. With rLLM, you can easily build your custom agents and environments, train them with reinforcement learning, and deploy them for real-world workloads.
-
-## Releases 📰
-
-<strong>[2025/09/16]</strong> rLLM [v0.2](https://github.com/rllm-org/rllm/tree/v0.2) is now in development and available in preview. It comes integrated with verl-0.5.0, featuring support for Megatron training. Stay tuned for more updates!
-
-<strong>[2025/07/01]</strong> We release [`DeepSWE-Preview`](https://pretty-radio-b75.notion.site/DeepSWE-Training-a-Fully-Open-sourced-State-of-the-Art[…]-by-Scaling-RL-22281902c1468193aabbe9a8c59bbe33?pvs=73), a 32B software engineering agent (SWE) trained with purely RL that achieves 59% on SWEBench-Verified with test-time scaling,(42.2% Pass@1), topping the SWEBench leaderboard for open-weight models.
-
-- 🍽️ An In-Depth Blog Post on our [SWE Agents and RL Training Recipes](https://pretty-radio-b75.notion.site/DeepSWE-Training-a-Fully-Open-sourced-State-of-the-Art[…]-by-Scaling-RL-22281902c1468193aabbe9a8c59bbe33?pvs=73)
-- 🤗 HF Model [`DeepSWE-Preview`](https://huggingface.co/agentica-org/DeepSWE-Preview)
-- 🤗 HF Dataset [`R2E-Gym-Subset`](https://huggingface.co/datasets/R2E-Gym/R2E-Gym-Subset)
-- 📄 [Training Scripts](https://github.com/rllm-org/rllm/tree/main/examples/swe)
-- 📈 [Wandb Training Logs](https://wandb.ai/mluo/deepswe)—All training runs and ablations.
-- 🔎 [Evaluation Logs](https://drive.google.com/file/d/10LIwpJeaFuiX6Y-qEG2a4a335PEuQJeS/view?usp=sharing)—16 passes over SWE-Bench-Verified.
-
-<strong>[2025/04/08]</strong> We release [`DeepCoder-14B-Preview`](https://pretty-radio-b75.notion.site/DeepCoder-A-Fully-Open-Source-14B-Coder-at-O3-mini-Level-1cf81902c14680b3bee5eb349a512a51), a 14B coding model that achieves an impressive **60.6%** Pass@1 accuracy on LiveCodeBench (+8% improvement), matching the performance of `o3-mini-2025-01-031 (Low)` and `o1-2024-12-17`. 
-
-<strong>[2025/02/10]</strong> We release [`DeepScaleR-1.5B-Preview`](https://pretty-radio-b75.notion.site/DeepScaleR-Surpassing-O1-Preview-with-a-1-5B-Model-by-Scaling-RL-19681902c1468005bed8ca303013a4e2), a 1.5B model that surpasses O1-Preview and achieves <strong>43.1% Pass@1</strong> on AIME. We achieve this by iteratively scaling Deepseek's GRPO algorithm from 8K→16K->24K context length for thinking.
-
-## Getting Started 🎯
-
-### Installation
-
-```bash
-# Clone the repository
-git clone --recurse-submodules https://github.com/rllm-org/rllm.git
-cd rllm
-
-# create a conda environment
-conda create -n rllm python=3.10 (use python=3.11 for MacOS)
-conda activate rllm
-
-# Install all dependencies
-pip install -e ./verl
-pip install -e .
-
-**Note:** On macOS, GPU features (flash-attn, deepspeed, vllm) are automatically excluded for compatibility. For GPU support on macOS, you can install with: `pip install -e .[gpu]`.
+## Environment Setup
+```
+conda create -n protein_llm python=3.10 -y && conda activate protein_llm
+# cu128 is for the latest version, downgrade it if conflicting with your environment
+(protein_llm): pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+(protein_llm): pip install -e .
 ```
 
-### Installation with Docker 🐳
-
-For a containerized setup, you can use Docker:
-
-```bash
-
-# Build the Docker image
-docker build -t rllm .
-
-# Create and start the container
-docker create --runtime=nvidia --gpus all --net=host --shm-size="10g" --cap-add=SYS_ADMIN -v .:/workspace/rllm -v /tmp:/tmp --name rllm-container rllm sleep infinity
-docker start rllm-container
-
-# Enter the container
-docker exec -it rllm-container bash
+## Data
+```
+data/
+|___train_subset_1k.jsonl # an example dataset with 1000 samples
 ```
 
-## Awesome Project using rLLM 🔥
-
-* [Tongyi DeepResearch](https://github.com/Alibaba-NLP/DeepResearch): A New Era of Open-Source AI Researchers [![GitHub Repo stars](https://img.shields.io/github/stars/Alibaba-NLP/DeepResearch)](https://github.com/Alibaba-NLP/DeepResearch)
-* [Terminal-Bench-RL](https://github.com/Danau5tin/terminal-bench-rl): Training Long-Horizon Terminal Agents with Reinforcement Learning [![GitHub Repo stars](https://img.shields.io/github/stars/Danau5tin/terminal-bench-rl)](https://github.com/Danau5tin/terminal-bench-rl)
-
-## Acknowledgements
-
-- Our training experiments are powered by our heavily modified fork of [verl](https://github.com/volcengine/verl), an open-source RLHF library.
-- Our models are trained on top of [`DeepSeek-R1-Distill-Qwen-1.5B`](https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B), [`DeepSeek-R1-Distill-Qwen-14B`](https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-14B), and [`Qwen3-32B`](https://huggingface.co/Qwen/Qwen3-32b).
-- Our work is done as part of [Berkeley Sky Computing Lab](https://skycomputing.berkeley.edu/), [Berkeley AI Research](https://bair.berkeley.edu/), and a successful collaboration with Together AI.
-
-
-## Citation
-
-Citing rLLM:
-
-```bibtex
-@misc{rllm2025,
-  title={rLLM: A Framework for Post-Training Language Agents},
-  author={Sijun Tan and Michael Luo and Colin Cai and Tarun Venkat and Kyle Montgomery and Aaron Hao and Tianhao Wu and Arnav Balyan and Manan Roongta and Chenguang Wang and Li Erran Li and Raluca Ada Popa and Ion Stoica},
-  year={2025},
-  howpublished={\url{https://pretty-radio-b75.notion.site/rLLM-A-Framework-for-Post-Training-Language-Agents-21b81902c146819db63cd98a54ba5f31}},
-  note={Notion Blog}
-  year={2025}
-}
+## Pretrained Models
+Before training, please prepare the following pretrained weights:
+```
+pretrained/
+|___ProTrek_650M
+    |___esm2_t33_650M_UR50D
+    |___foldseek_t30_150M
+    |___ProTrek_650M.pt
+```
+Simply download everything from https://huggingface.co/westlake-repl/ProTrek_650M to `pretrained/ProTrek_650M` by:
+```
+mkdir -p pretrained/ProTrek_650M
+huggingface download westlake-repl/ProTrek_650M --local-dir pretrained/ProTrek_650M
 ```
 
-Citing DeepSWE:
 
-```bibtex
-@misc{deepswe2025,
-  title={DeepSWE: Training a State-of-the-Art Coding Agent from Scratch by Scaling RL},
-  author={Michael Luo and Naman Jain and Jaskirat Singh and Sijun Tan and Ameen Patel and Qingyang Wu and Alpay Ariyak and Colin Cai and Tarun Venkat and Shang Zhu and Ben Athiwaratkun and Manan Roongta and Ce Zhang and Li Erran Li and Raluca Ada Popa and Koushik Sen and Ion Stoica},
-  howpublished={\url{https://pretty-radio-b75.notion.site/DeepSWE-Training-a-Fully-Open-sourced-State-of-the-Art-Coding-Agent-by-Scaling-RL-22281902c1468193aabbe9a8c59bbe33}},
-  note={Notion Blog},
-  year={2025}
-}
+## Train
+Please refer to the `src/protein_llm/train.py` for training details.
+```
+# train PLLM with Qwen2.5-3B-Instuct as the base llm by a H100 GPU, reduce trainer.per_device_train_batch_size if meeting OOM error
+(protein_llm): python -m protein_llm.train model=qwen25_3b trainer.per_device_train_batch_size=4 trainer.num_train_epochs=10
+
+# train PLLM with Qwen2.5-0.5B-Instuct as the base llm by a 4090 GPU
+(protein_llm): python -m protein_llm.train model=qwen25_05b trainer.per_device_train_batch_size=2 trainer.num_train_epochs=10
 ```
 
-Citing DeepCoder:
-
-```bibtex
-@misc{deepcoder2025,
-  title={DeepCoder: A Fully Open-Source 14B Coder at O3-mini Level},
-  author={Michael Luo and Sijun Tan and Roy Huang and Ameen Patel and Alpay Ariyak and Qingyang Wu and Xiaoxiang Shi and Rachel Xin and Colin Cai and Maurice Weber and Ce Zhang and Li Erran Li and Raluca Ada Popa and Ion Stoica},
-  howpublished={\url{https://pretty-radio-b75.notion.site/DeepCoder-A-Fully-Open-Source-14B-Coder-at-O3-mini-Level-1cf81902c14680b3bee5eb349a512a51}},
-  note={Notion Blog},
-  year={2025}
-}
+After training, logging information and checkpoints will be saved to `./results`. For example, the two commands above will give:
+```
+results/
+|___qwen25_05b_model-qwen25_05b_trainer.per_device_train_batch_size-2_trainer.num_train_epochs-10
+|   |___checkpoint-*
+|   |   |___*           # model weights and configuration files
+|   |___config.yaml     # experimental configuration
+|___qwen25_3b_model-qwen25_3b_trainer.per_device_train_batch_size-4_trainer.num_train_epochs-10
 ```
 
-Citing DeepScaleR:
+### Train by your own data
+Please form your data as a `.jsonl` file with exact the same structure and field names with `train_subset_1k.jsonl` and place your `.jsonl` file at `./data`.
+Then, run the command by:
+```
+# Train a PLLM model with Qwen2.5-3B-Instruct as the base llm with your new data
+(protein_llm): python -m protein_llm.train model=qwen25_3b trainer.per_device_train_batch_size=4 trainer.num_train_epochs=10 dataset="{your-jsonl-name}.jsonl"
+```
 
-```bibtex
-@misc{deepscaler2025,
-  title={DeepScaleR: Surpassing O1-Preview with a 1.5B Model by Scaling RL},
-  author={Michael Luo and Sijun Tan and Justin Wong and Xiaoxiang Shi and William Y. Tang and Manan Roongta and Colin Cai and Jeffrey Luo and Li Erran Li and Raluca Ada Popa and Ion Stoica},
-  year={2025},
-  howpublished={\url{https://pretty-radio-b75.notion.site/DeepScaleR-Surpassing-O1-Preview-with-a-1-5B-Model-by-Scaling-RL-19681902c1468005bed8ca303013a4e2}},
-  note={Notion Blog}
-  year={2025}
-}
+
+### Resume training
+Simply run the same command again to resume the training from the latest checkpoint.
+
+
+### Distributed training
+DDP training is under development, so the performance may not be optimal. Please refer to the following commands:
+```
+# single-node DDP training with 4 H100 GPUs
+(protein_llm): torchrun --nproc_per_node=4 src/protein_llm/train.py model=qwen25_3b trainer.per_device_train_batch_size=4 trainer.num_train_epochs=10
+
+
+# multi-node DDP training (master node)
+torchrun --nproc_per_node=4 --nnodes=2 --node_rank=0 \
+    --master_addr=<master-ip-address> --master_port=29500 \
+    src/protein_llm/train.py model=qwen25_3b trainer.per_device_train_batch_size=4 trainer.num_train_epochs=10
+
+# multi-node DDP training (other nodes)
+torchrun --nproc_per_node=4 --nnodes=2 --node_rank=1 \
+    --master_addr=<master-ip-address> --master_port=29500 \
+    src/protein_llm/train.py model=qwen25_3b trainer.per_device_train_batch_size=4 trainer.num_train_epochs=10
+```
+
+## Inference
+We support transformers-style inference by `generate()` APIs. Please refer to the following example codes for usage:
+```python
+from protein_llm.models.modeling_pllm import PLLM
+from transformers import AutoTokenizer
+
+model_path = "{path-to-your-trained-checkpoint}"  # e.g., ./results/qwen25_05b_model-qwen25_05b_trainer.per_device_train_batch_size-2_trainer.num_train_epochs-10/checkpoint-500
+pllm = PLLM.from_pretrained(
+    model_path, load_pretrained=False # necessary for calling from_pretrained()
+)
+pllm = pllm.to("cuda")
+tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=True)
+
+# the first sample in train_subset_1k.jsonl here for illustration
+user_content = (
+    "You are a professional protein biologist. "
+    "Based only on the provided inputs, produce a natural, concise, and biologically accurate description of the protein. "
+    "First reason step by step inside a <thinking> block using sequence-derived evidence and structural cues, "
+    "then provide the final 2–4 sentence description inside an <answer> block.\n\n"
+    "Inputs:\n"
+    "Protein: <protein>\n"
+    "Structure: <structure>"
+)
+
+# Ground-Truth of this sample, used to compare with the generated response below
+assistant_content = (
+    "<thinking>\n"
+    "1. **Signal Peptide and Localization**: The sequence starts with methionine (M), but there is no clear signal "
+    "peptide sequence that would suggest secretion or targeting to specific organelles. This suggests a cytoplasmic "
+    "or nuclear localization.\n\n"
+    "2. **Transmembrane Helices**: The sequence does not show characteristics of "
+    "transmembrane helices, such as stretches of hydrophobic residues typically found in membrane-spanning regions. "
+    "This suggests the protein is not membrane-bound.\n\n"
+    "3. **Repeats and Low-Complexity Segments**: The sequence "
+    "does not contain obvious repetitive motifs or low-complexity regions that are often associated with structural "
+    "or functional repeats.\n\n"
+    "4. **Catalytic Motifs/Domains**: The sequence contains cysteine residues (C) and "
+    "histidine (H) that could potentially form a zinc finger or other metal-binding motif, but there is no clear "
+    "pattern indicating a known catalytic domain.\n\n"
+    "5. **Family and Function**: The sequence contains a segment "
+    "\"PCPCG\" which is a characteristic motif found in some proteins of the UPF0225 family. This family is known "
+    "for proteins with unknown functions, often involved in stress responses or regulatory roles.\n\n"
+    "6. **Overall "
+    "Function**: Given the lack of clear catalytic motifs or transmembrane regions, and the presence of a UPF0225 "
+    "family motif, the protein is likely involved in a regulatory or structural role within the cell, potentially "
+    "related to stress response or protein-protein interactions.\n"
+    "</thinking>\n\n"
+    "<answer>\n"
+    "Belongs to the UPF0225 family.\n"
+    "</answer>"
+)
+
+aa_seq = "MSKGTPSRGKRQTQTHLTCRRCGRMSYHKRHKICSSCGFGRSTRMRSYGWITKRPKVATH"
+structure = "<|chain:A|> <|chain_sep|> #ddddvvvvpppddqfdqdppprdraqgpvqragpqqggpndpggdddpvvddddpdddd"
+
+test_prompt = tokenizer.apply_chat_template(
+    [dict(role="user", content=user_content)], add_generation_prompt=True, tokenize=False
+)
+test_inputs = tokenizer(test_prompt, return_tensors="pt").to("cuda")
+generated_ids = pllm.generate(
+    **test_inputs,
+    aa_seq=[aa_seq],
+    stru_str=[structure],
+    max_new_tokens=1024
+)
+
+generated_ids = [
+    output_ids[len(input_ids):] for input_ids, output_ids in zip(test_inputs.input_ids, generated_ids)
+]
+response = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
+print(response)
 ```

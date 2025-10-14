@@ -1,0 +1,37 @@
+defaults:
+  - model: qwen25_05b
+  - _self_
+
+# Project root directory (from train.py or relative path)
+project_root: ${oc.env:PWD}
+
+dataset: train_subset_1k.jsonl
+dataset_dir: ${project_root}/data
+
+model:
+  protein_config: ${project_root}/pretrained/ProTrek_650M/esm2_t33_650M_UR50D
+  structure_config: ${project_root}/pretrained/ProTrek_650M/foldseek_t30_150M
+  protrek_ckpt: ${project_root}/pretrained/ProTrek_650M/ProTrek_650M.pt
+  prot_slot: 1
+  stru_slot: 3
+  train_encoders: false
+  proj_hid: 1024
+  dropout: 0.1
+
+trainer:
+  logging_steps: 1
+  save_steps: 100
+  overwrite_output_dir: true
+  save_only_model: false
+  report_to: none  # choices: [none, wandb, tensorboard, swanlab, mlflow]
+
+  ### train
+  # global batch size = 8 node x 1 gpu x 8 x 4 = 256
+  per_device_train_batch_size: 8
+  gradient_accumulation_steps: 4
+  learning_rate: 1.0e-5
+  weight_decay: 0.0
+  num_train_epochs: 1.0
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.1
+  bf16: true
