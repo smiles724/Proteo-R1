@@ -15,9 +15,9 @@ except Exception as _e:
     _pllm_safe_open = None
     _pllm_save_safetensors = None
 
-# Keep your original import style; adjust if your files aren't under a 'model' package
-import protein_encoder as protein_encoder_mod
-import structure_encoder as structure_encoder_mod
+# Use relative imports since these modules are in the same package
+from . import protein_encoder as protein_encoder_mod
+from . import structure_encoder as structure_encoder_mod
 
 DTYPE_MAP = {"fp32": torch.float32, "float32": torch.float32, "fp16": torch.float16, "float16": torch.float16, "bf16": torch.bfloat16, "bfloat16": torch.bfloat16, "auto": None,
              "default": None, None: None}
@@ -74,11 +74,12 @@ def _maybe_copy_into(dirpath: Path, src_path, dst_name):
 def _pllm_gather_custom_state_dict(model: "PLLM"):
     sd = {}
     if hasattr(model, "protein_encoder"):
-        sd.update({f"protein_encoder.{k}": v.detach().cpu() for k, v in model.protein_encoder.state_dict().items()})
+        # Clone tensors to avoid shared memory issues with safetensors
+        sd.update({f"protein_encoder.{k}": v.detach().cpu().clone() for k, v in model.protein_encoder.state_dict().items()})
     if hasattr(model, "structure_encoder"):
-        sd.update({f"structure_encoder.{k}": v.detach().cpu() for k, v in model.structure_encoder.state_dict().items()})
+        sd.update({f"structure_encoder.{k}": v.detach().cpu().clone() for k, v in model.structure_encoder.state_dict().items()})
     if hasattr(model, "prefix_mlp"):
-        sd.update({f"prefix_mlp.{k}": v.detach().cpu() for k, v in model.prefix_mlp.state_dict().items()})
+        sd.update({f"prefix_mlp.{k}": v.detach().cpu().clone() for k, v in model.prefix_mlp.state_dict().items()})
     return sd
 
 
@@ -286,8 +287,11 @@ class PLLM(nn.Module):
         except TypeError:
             self.llm.save_pretrained(p / "llm")
         self.tokenizer.save_pretrained(p / "llm")
+        
+        # Also save tokenizer to root for training compatibility
+        self.tokenizer.save_pretrained(p)
 
-        # Save encoders & prefix
+        # Save encoders & prefix (tensors are cloned in _pllm_gather_custom_state_dict to avoid shared memory)
         sd = _pllm_gather_custom_state_dict(self)
         if _pllm_save_safetensors is None:
             raise RuntimeError("safetensors is required to save custom PLLM weights. Please `pip install safetensors`.")
