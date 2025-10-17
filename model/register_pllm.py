@@ -13,14 +13,14 @@ import os
 import torch
 import torch.nn as nn
 
-from transformers import AutoConfig, AutoModelForCausalLM
+from transformers import AutoConfig, AutoModelForCausalLM, PretrainedConfig
 from transformers.models.auto.configuration_auto import CONFIG_MAPPING
 from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING
 import sys
 from pathlib import Path
 
 
-class PLLMConfig:
+class PLLMConfig(PretrainedConfig):
     """
     Minimal config class for PLLM to satisfy AutoConfig requirements.
     """
@@ -168,7 +168,7 @@ class PLLMForCausalLM(nn.Module):
             structure_config = kwargs.get('structure_config')
             protrek_ckpt = kwargs.get('protrek_ckpt', None)
             prot_slot = kwargs.get('prot_slot', 1)
-            stru_slot = kwargs.get('stru_slot', 3)
+            stru_slot = getattr(config, 'stru_slot', 3)
             single_token_prefix = kwargs.get('single_token_prefix', False)
             prefix_len = kwargs.get('prefix_len', 4)
             proj_hid = kwargs.get('proj_hid', 1024)
@@ -213,37 +213,75 @@ class PLLMForCausalLM(nn.Module):
         Load PLLM from a saved directory.
         This overrides PLLM's from_pretrained to work with AutoModel.
         """
+        print(f"[PLLMForCausalLM] Starting from_pretrained with path: {pretrained_model_name_or_path}")
+        
         # Lazy import PLLM to avoid dependency issues
         from ProteinFM.model.proteinLLM_pllm import PLLM as _PLLM
+        print(f"[PLLMForCausalLM] Imported PLLM class successfully")
         
         # Load using PLLM's from_pretrained
+        print(f"[PLLMForCausalLM] Loading PLLM model from {pretrained_model_name_or_path}")
         pllm_model = _PLLM.from_pretrained(pretrained_model_name_or_path)
+        print(f"[PLLMForCausalLM] PLLM model loaded successfully")
         
         # Load config
         if config is None:
+            print(f"[PLLMForCausalLM] Loading config from {pretrained_model_name_or_path}")
             config = PLLMConfig.from_pretrained(pretrained_model_name_or_path)
+            print(f"[PLLMForCausalLM] Config loaded successfully")
         
         # Create wrapper instance without calling __init__
+        print(f"[PLLMForCausalLM] Creating wrapper instance")
         wrapped_model = cls.__new__(cls)
         
         # Initialize nn.Module parent class
+        print(f"[PLLMForCausalLM] Initializing nn.Module parent class")
         nn.Module.__init__(wrapped_model)
         
         # Copy all PLLM attributes
+        print(f"[PLLMForCausalLM] Copying PLLM attributes")
         for attr_name in ['llm', 'protein_encoder', 'structure_encoder', 'prefix_mlp', 
                           'tokenizer', 'hidden_size', 'prefix_len', 'protein_config', 
                           'structure_config', 'train_encoders', 'proj_hid']:
             if hasattr(pllm_model, attr_name):
-                setattr(wrapped_model, attr_name, getattr(pllm_model, attr_name))
+                attr_value = getattr(pllm_model, attr_name)
+                setattr(wrapped_model, attr_name, attr_value)
+                print(f"[PLLMForCausalLM] Copied attribute: {attr_name} (type: {type(attr_value)})")
+        
+        # Register submodules as children for proper nn.Module behavior
+        print(f"[PLLMForCausalLM] Registering submodules as children")
+        if hasattr(wrapped_model, 'llm'):
+            wrapped_model._modules['llm'] = wrapped_model.llm
+            print(f"[PLLMForCausalLM] Registered llm as child module")
+        if hasattr(wrapped_model, 'protein_encoder'):
+            wrapped_model._modules['protein_encoder'] = wrapped_model.protein_encoder
+            print(f"[PLLMForCausalLM] Registered protein_encoder as child module")
+        if hasattr(wrapped_model, 'structure_encoder'):
+            wrapped_model._modules['structure_encoder'] = wrapped_model.structure_encoder
+            print(f"[PLLMForCausalLM] Registered structure_encoder as child module")
+        if hasattr(wrapped_model, 'prefix_mlp'):
+            wrapped_model._modules['prefix_mlp'] = wrapped_model.prefix_mlp
+            print(f"[PLLMForCausalLM] Registered prefix_mlp as child module")
+        
+        # Verify that children are properly registered
+        print(f"[PLLMForCausalLM] Children modules: {list(wrapped_model.named_children())}")
+        direct_params = list(wrapped_model.named_parameters(prefix='', recurse=False))
+        print(f"[PLLMForCausalLM] Direct parameters count: {len(direct_params)}")
+        for name, param in direct_params[:3]:  # Print first 3 parameter names and shapes
+            print(f"[PLLMForCausalLM] Direct param: {name} (shape: {param.shape})")
         
         # Copy methods
+        print(f"[PLLMForCausalLM] Copying PLLM methods")
         for method_name in ['encode_protein_batch', 'forward', 'generate', 'save_pretrained']:
             if hasattr(pllm_model, method_name):
                 setattr(wrapped_model, method_name, getattr(pllm_model, method_name))
+                print(f"[PLLMForCausalLM] Copied method: {method_name}")
         
         # Set config
         wrapped_model.config = config
+        print(f"[PLLMForCausalLM] Set config successfully")
         
+        print(f"[PLLMForCausalLM] from_pretrained completed successfully")
         return wrapped_model
     
     def to(self, *args, **kwargs):
@@ -281,20 +319,44 @@ class PLLMForCausalLM(nn.Module):
     
     def named_parameters(self, prefix='', recurse=True, remove_duplicate=True):
         """Return named parameters from all submodules"""
+        print(f"[PLLMForCausalLM] named_parameters called with prefix='{prefix}', recurse={recurse}")
         memo = set() if remove_duplicate else None
+        param_count = 0
         
-        # Get parameters from each submodule
-        for name, module in [('llm', getattr(self, 'llm', None)),
-                             ('protein_encoder', getattr(self, 'protein_encoder', None)),
-                             ('structure_encoder', getattr(self, 'structure_encoder', None)),
-                             ('prefix_mlp', getattr(self, 'prefix_mlp', None))]:
-            if module is not None:
-                # Use the module's named_parameters method directly
-                for param_name, param in module.named_parameters(prefix=f'{prefix}{name}.', recurse=recurse):
+        if not recurse:
+            # When recurse=False, we should only return direct parameters
+            # But our wrapper doesn't have direct parameters, so we need to return parameters from children
+            print(f"[PLLMForCausalLM] recurse=False, getting parameters from direct children")
+            for name, module in self.named_children():
+                print(f"[PLLMForCausalLM] Processing child module: {name} (type: {type(module)})")
+                # Get parameters from this child module with recurse=True to get all its parameters
+                for param_name, param in module.named_parameters(prefix=f'{prefix}{name}.', recurse=True):
                     if memo is None or param not in memo:
                         if memo is not None:
                             memo.add(param)
+                        param_count += 1
+                        if param_count <= 5:  # Print first 5 parameters for debugging
+                            print(f"[PLLMForCausalLM] Parameter {param_count}: {param_name} (shape: {param.shape})")
                         yield param_name, param
+        else:
+            # When recurse=True, get all parameters from all submodules
+            print(f"[PLLMForCausalLM] recurse=True, getting parameters from all submodules")
+            for name, module in [('llm', getattr(self, 'llm', None)),
+                                 ('protein_encoder', getattr(self, 'protein_encoder', None)),
+                                 ('structure_encoder', getattr(self, 'structure_encoder', None)),
+                                 ('prefix_mlp', getattr(self, 'prefix_mlp', None))]:
+                if module is not None:
+                    print(f"[PLLMForCausalLM] Processing module: {name} (type: {type(module)})")
+                    for param_name, param in module.named_parameters(prefix=f'{prefix}{name}.', recurse=True):
+                        if memo is None or param not in memo:
+                            if memo is not None:
+                                memo.add(param)
+                            param_count += 1
+                            if param_count <= 5:  # Print first 5 parameters for debugging
+                                print(f"[PLLMForCausalLM] Parameter {param_count}: {param_name} (shape: {param.shape})")
+                            yield param_name, param
+        
+        print(f"[PLLMForCausalLM] named_parameters completed, total params: {param_count}")
     
     def train(self, mode=True):
         """Set training mode"""
