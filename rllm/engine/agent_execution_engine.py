@@ -208,8 +208,8 @@ class AgentExecutionEngine:
         prompt_token_len = len(prompt_tokens)
         # Note, this should never happen!
         if prompt_token_len > self.max_prompt_length:
-            agent.reset()
-            raise Exception(f"Trajectory {idx}: initial prompt length {prompt_token_len} already exceeded max_prompt_length {self.max_prompt_length}, retrying")
+            logger.warning(f"Trajectory {idx}: initial prompt length {prompt_token_len} already exceeded max_prompt_length {self.max_prompt_length}, truncating from the left")
+            prompt_tokens = prompt_tokens[-self.max_prompt_length :]
 
         for step_idx in range(self.max_steps):
             # Get action from agent

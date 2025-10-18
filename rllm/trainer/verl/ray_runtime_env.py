@@ -22,7 +22,39 @@ def get_ppo_ray_runtime_env():
         if os.environ.get(key) is not None:
             env_vars.pop(key, None)
 
+    # Ensure workers can import the local rllm package without packaging large directories.
+    # We do this by explicitly propagating PYTHONPATH to include the project root.
+    try:
+        import rllm  # type: ignore
+
+        rllm_dir = os.path.dirname(os.path.abspath(rllm.__file__))
+        project_root = os.path.dirname(rllm_dir)
+    except Exception:
+        # Fallback if rllm is not importable yet; infer from this file location.
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../"))
+
+    current_py_path = os.environ.get("PYTHONPATH", "")
+    if project_root not in current_py_path.split(":"):
+        env_vars["PYTHONPATH"] = f"{project_root}:{current_py_path}" if current_py_path else project_root
+    else:
+        # Even if already present on driver, make sure workers also get it explicitly.
+        env_vars["PYTHONPATH"] = current_py_path
+
+    # Exclude large/local artifacts to stay under Ray's 512MiB packaging limit
+    excludes = [
+        ".git/**",
+        "model/pllm/**",
+        "model/ProTrek_650M/**",
+        "outputs/**",
+        "wandb/**",
+        "checkpoints/**",
+        "flash_attn-*.whl",
+        "flashinfer_python-*.whl",
+    ]
+
     return {
+        # Do NOT set working_dir to avoid packaging multi-GB artifacts.
         "env_vars": env_vars,
+        "excludes": excludes,
         "worker_process_setup_hook": PPO_RAY_RUNTIME_ENV["worker_process_setup_hook"],
     }

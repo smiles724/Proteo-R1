@@ -20,16 +20,26 @@ export RAY_OBJECT_STORE_ALLOW_SLOW_STORAGE=1
 export RAY_DEDUP_LOGS=0
 
 # Add ProteinFM parent directory to Python path for custom model registration
-export PYTHONPATH="/mnt/efs/erran/rllm_v02:${PYTHONPATH}"
+# RLLM_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && cd ../../.. && pwd )
+# More robust RLLM_DIR detection that works with source
+# RLLM_DIR=$(python3 -c "import rllm, os; p = next(iter(getattr(rllm,'__path__',[])), None); print(os.path.dirname(p) if p else os.path.dirname(os.path.dirname(os.path.abspath(rllm.__file__))))")
+
+# Get the directory of this script
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+# Assume the project root is three levels up from the script's directory
+PROJECT_ROOT=$( cd -- "$SCRIPT_DIR/../../../" &> /dev/null && pwd )
+cd "${PROJECT_ROOT}"
+
+export PYTHONPATH=${PROJECT_ROOT}:${PYTHONPATH}
 
 # Find the directory where rllm package is located
-RLLM_DIR=$(python3 -c "import rllm; import os; print(os.path.dirname(os.path.dirname(rllm.__file__)))")
+# RLLM_DIR=$(python3 -c "import rllm, os; p = next(iter(getattr(rllm,'__path__',[])), None); print(os.path.dirname(p) if p else os.path.dirname(os.path.dirname(os.path.abspath(rllm.__file__))))")
 
 # For training with prefix MLP, use the full PLLM wrapper
 # This includes: base LLM + protein encoders (frozen) + prefix MLP (trainable)
-MODEL_PATH=/mnt/efs/erran/rllm_v02/ProteinFM/model/pllm
+MODEL_PATH=${PROJECT_ROOT}/rllm/model/pllm
 
-python3 -m examples.deepprotein.train_deepprotein \
+python3 -m rllm.examples.deepprotein.train_deepprotein \
     algorithm.adv_estimator=grpo \
     +data.dataset_name=thermostability \
     data.train_batch_size=128 \
@@ -37,7 +47,7 @@ python3 -m examples.deepprotein.train_deepprotein \
     data.max_prompt_length=2048 \
     data.max_response_length=8192 \
     actor_rollout_ref.model.path=$MODEL_PATH \
-    +actor_rollout_ref.model.external_lib=ProteinFM.model.register_pllm \
+    +actor_rollout_ref.model.external_lib=rllm.model.register_pllm \
     actor_rollout_ref.hybrid_engine=True \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.model.use_remove_padding=True \
@@ -79,7 +89,7 @@ python3 -m examples.deepprotein.train_deepprotein \
     +trainer.log_freq=5 \
     +trainer.nccl_timeout=7200 \
     trainer.val_before_train=True \
-    trainer.n_gpus_per_node=1 \
+    trainer.n_gpus_per_node=8 \
     trainer.nnodes=1 \
     trainer.save_freq=20 \
     trainer.test_freq=20 \
