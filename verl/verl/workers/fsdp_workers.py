@@ -74,6 +74,9 @@ from verl.utils.profiler.performance import reduce_timing
 from verl.utils.py_functional import convert_to_regular_types
 from verl.workers.sharding_manager.fsdp_ulysses import FSDPUlyssesShardingManager
 
+#ERRAN:
+_debugger_state = {"status": "not_checked"}
+
 logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 
@@ -215,7 +218,7 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
         use_remove_padding=False,
         use_fused_kernels=False,
         enable_gradient_checkpointing=False,
-        trust_remote_code=False,
+        trust_remote_code=True,
         use_liger=False,
         role="actor",
         enable_activation_offload=False,
@@ -226,7 +229,21 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
 
         from verl.utils.model import get_generation_config, print_model_size, update_model_config
         from verl.utils.torch_dtypes import PrecisionType
-
+        # DEBUGGING: Uncomment the next line to debug this worker
+        # import ray; ray.util.pdb.set_trace()
+        # Add detailed logging for debugging
+        # Barrier 1: Ensure all ranks are ready before debugging starts
+        import torch.distributed as dist
+        if False: #dist.get_rank() == 0:
+            print("🔵 All ranks ready. Starting debugger on rank 0...")
+            import debugpy
+            # Listen on a specific port. Ensure this port is not in use.
+            debugpy.listen(41583)
+            print("⏳ Waiting for VS Code debugger to attach on rank 0...")
+            debugpy.wait_for_client()
+            debugpy.breakpoint() # Pause execution after the client attaches
+      
+      
         assert role in ["actor", "ref"]
 
         log_gpu_memory_usage(f"Before init {role} from HF AutoModel", logger=logger)
@@ -282,12 +299,18 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
             else:
                 actor_module_class = AutoModelForCausalLM
 
+            print(f"[FSDP Worker] Loading model from {local_path}")
+            print(f"[FSDP Worker] Model class: {actor_module_class}")
+            print(f"[FSDP Worker] Model config: {actor_model_config}")
+            print(f"[FSDP Worker] Trust remote code: {trust_remote_code}")
+            
             actor_module = actor_module_class.from_pretrained(
                 pretrained_model_name_or_path=local_path,
                 torch_dtype=torch_dtype,
                 config=actor_model_config,
-                trust_remote_code=trust_remote_code,
+                trust_remote_code=trust_remote_code
             )
+            print(f"[FSDP Worker] Model loaded successfully: {type(actor_module)}")
 
             # Apply Liger kernel to the model if use_liger is set to True
             if use_liger:
@@ -367,7 +390,30 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
         # We force turn off CPUOffload for actor because it causes incorrect results when using grad accumulation
         cpu_offload = None if role == "actor" else CPUOffload(offload_params=True)
         fsdp_strategy = self.config.actor.strategy
+        
+        # Get ignored modules for FSDP (frozen encoders in PLLM)
+        ignored_modules = []
+        if hasattr(actor_module, 'get_fsdp_ignored_modules'):
+            ignored_modules = actor_module.get_fsdp_ignored_modules()
+            if self.rank == 0 and ignored_modules:
+                print(f"FSDP ignoring {len(ignored_modules)} frozen modules: {[type(m).__name__ for m in ignored_modules]}")
+            # Move ignored modules to GPU before FSDP wrapping (they won't be processed by param_init_fn)
+            for ignored_module in ignored_modules:
+                # Check if module is on meta device and use to_empty() if so
+                if any(p.is_meta for p in ignored_module.parameters()):
+                    ignored_module.to_empty(device=get_device_id())
+                else:
+                    ignored_module.to(get_device_id())
+        
         if fsdp_strategy == "fsdp":
+            print(f"[FSDP Worker] Starting FSDP wrapping")
+            print(f"[FSDP Worker] Actor module type: {type(actor_module)}")
+            print(f"[FSDP Worker] Sharding strategy: {sharding_strategy}")
+            print(f"[FSDP Worker] Ignored modules: {[type(m).__name__ for m in ignored_modules]}")
+            print(f"[FSDP Worker] Device mesh: {self.device_mesh}")
+            print(f"[FSDP Worker] sync_module_states: True")
+            
+            print(f"[FSDP Worker] About to call FSDP constructor...")
             actor_module_fsdp = FSDP(
                 actor_module,
                 cpu_offload=cpu_offload,
@@ -380,7 +426,9 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
                 device_mesh=self.device_mesh,
                 use_orig_params=self.config.actor.fsdp_config.get("use_orig_params", False),
                 forward_prefetch=self.config.actor.fsdp_config.get("forward_prefetch", False),
+                ignored_modules=ignored_modules,
             )
+            print(f"[FSDP Worker] FSDP wrapping completed successfully")
         elif fsdp_strategy == "fsdp2":
             assert CPUOffloadPolicy is not None, "PyTorch version >= 2.4 is required for using fully_shard API (FSDP2)"
             mp_policy = MixedPrecisionPolicy(
@@ -456,7 +504,7 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
 
         return actor_module_fsdp, actor_optimizer, actor_lr_scheduler, actor_model_config
 
-    def _build_rollout(self, trust_remote_code=False):
+    def _build_rollout(self, trust_remote_code=True):
         from torch.distributed.device_mesh import init_device_mesh
 
         # TODO(sgm): support FSDP hybrid shard for larger model
@@ -499,6 +547,7 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
                 model_hf_config=self.actor_model_config,
                 device_mesh=rollout_device_mesh,
                 trust_remote_code=trust_remote_code,
+                external_lib=self.config.model.get("external_lib", None),
                 **lora_kwargs,
             )
 
@@ -560,11 +609,19 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
         return rollout, rollout_sharding_manager
 
     @register(dispatch_mode=Dispatch.ONE_TO_ALL)
-    def init_model(self):
+    def init_model(self):  
         from verl.workers.actor import DataParallelPPOActor
 
         # This is used to import external_lib into the huggingface systems
-        import_external_libs(self.config.model.get("external_lib", None))
+        external_lib = self.config.model.get("external_lib", None)
+        print(f"[FSDP Worker] Attempting to import external_lib: {external_lib}")
+        print(f"[FSDP Worker] PYTHONPATH: {os.environ.get('PYTHONPATH', 'NOT SET')}")
+        import_external_libs(external_lib)
+        print(f"[FSDP Worker] Successfully imported external_lib")
+        
+        # Verify registration worked
+        from transformers.models.auto.configuration_auto import CONFIG_MAPPING
+        print(f"[FSDP Worker] 'protein_llm_wrapper' in CONFIG_MAPPING: {'protein_llm_wrapper' in CONFIG_MAPPING}")
 
         override_model_config = OmegaConf.to_container(self.config.model.get("override_config", OmegaConf.create()))
 
@@ -1643,7 +1700,7 @@ class RewardModelWorker(Worker, DistProfilerExtension):
 
 # ================================= Async related workers =================================
 class AsyncActorRolloutRefWorker(ActorRolloutRefWorker):
-    def _build_rollout(self, trust_remote_code=False):
+    def _build_rollout(self, trust_remote_code=True):
         rollout, rollout_sharding_manager = super()._build_rollout(trust_remote_code)
 
         # NOTE: rollout is not actually initialized here, it's deferred

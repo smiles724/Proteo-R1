@@ -87,6 +87,14 @@ class vLLMRollout(BaseRollout):
         """
         super().__init__()
         self.config = config
+        
+        # Import external library before vLLM tries to load the model
+        external_lib = kwargs.get("external_lib", None)
+        if external_lib:
+            print(f"[vLLM Rollout] Importing external library: {external_lib}")
+            from verl.utils.import_utils import import_external_libs
+            import_external_libs(external_lib)
+            print(f"[vLLM Rollout] Successfully imported external library")
 
         tensor_parallel_size = self.config.get("tensor_model_parallel_size", 1)
         assert tensor_parallel_size <= torch.distributed.get_world_size(), (
@@ -143,7 +151,7 @@ class vLLMRollout(BaseRollout):
                              please increase max_num_batched_tokens or disable chunked prefill"
             )
 
-        trust_remote_code = kwargs.get("trust_remote_code", False)
+        trust_remote_code = kwargs.get("trust_remote_code", True)
         load_format = "dummy" if config.load_format.startswith("dummy") else config.load_format
 
         lora_kwargs = kwargs.pop("lora_kwargs", {})

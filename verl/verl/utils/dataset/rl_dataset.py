@@ -127,17 +127,105 @@ class RLHFDataset(Dataset):
         for i, parquet_file in enumerate(data_files):
             self.data_files[i] = copy_to_local(src=parquet_file, cache_dir=self.cache_dir, use_shm=self.use_shm)
 
+
     def _read_files_and_tokenize(self):
-        dataframes = []
-        for parquet_file in self.data_files:
-            # read parquet files and cache
-            dataframe = datasets.load_dataset("parquet", data_files=parquet_file)["train"]
-            dataframes.append(dataframe)
-        self.dataframe: datasets.Dataset = datasets.concatenate_datasets(dataframes)
+        """
+        Robust parquet loader:
+        1) Try HF `datasets.load_dataset("parquet", ...)`.
+        2) If that fails due to Arrow chunked/nested issues, fall back to:
+            - Polars -> pyarrow.Table -> datasets.Dataset.from_dict
+            - DuckDB -> pyarrow.Table -> datasets.Dataset.from_dict
+        """
+        import traceback
+        import pyarrow as pa
 
-        print(f"dataset len: {len(self.dataframe)}")
+        # 1) Preferred: HuggingFace datasets
+        try:
+            print(f"Loading parquet files directly using datasets: {self.data_files}")
+            self.dataframe = datasets.load_dataset(
+                "parquet",
+                data_files=self.data_files,
+                split="train",
+                cache_dir=self.cache_dir,
+                num_proc=max(1, int(self.num_workers or 1)),
+            )
+            print(f"Successfully loaded {len(self.dataframe)} examples using datasets.load_dataset()")
+            print(f"dataset len: {len(self.dataframe)}")
+            self.dataframe = self.maybe_filter_out_long_prompts(self.dataframe)
+            return
+        except Exception as e:
+            print(f"datasets.load_dataset() failed: {repr(e)} — falling back to robust readers")
+            traceback.print_exc()
 
-        self.dataframe = self.maybe_filter_out_long_prompts(self.dataframe)
+        # Helper to convert pyarrow.Table -> HF dataset (safe across datasets versions)
+        def table_to_hf_dataset(table: pa.Table):
+            # ensure pyarrow.Table
+            if isinstance(table, pa.RecordBatchReader):
+                table = table.read_all()
+            if not isinstance(table, pa.Table):
+                # try to coerce
+                table = pa.Table.from_batches(list(table))
+            table = table.combine_chunks()
+            py_dict = table.to_pydict()  # returns native Python lists for each column
+            return datasets.Dataset.from_dict(py_dict)
+
+        # 2) Fallback: Polars -> pyarrow.Table
+        try:
+            import polars as pl
+            print("Attempting fallback: polars.read_parquet -> pyarrow.Table -> datasets.Dataset")
+            tables = []
+            for f in self.data_files:
+                print(f"  polars reading {f} ...")
+                pl_df = pl.read_parquet(f)
+                table = pl_df.to_arrow()
+                # convert potential RecordBatchReader -> Table
+                if isinstance(table, pa.RecordBatchReader):
+                    table = table.read_all()
+                tables.append(table)
+
+            combined = pa.concat_tables(tables) if len(tables) > 1 else tables[0]
+            self.dataframe = table_to_hf_dataset(combined)
+            print(f"Loaded dataset via polars fallback: {len(self.dataframe)} examples")
+            self.dataframe = self.maybe_filter_out_long_prompts(self.dataframe)
+            return
+        except Exception as e_polars:
+            print(f"Polars fallback failed: {repr(e_polars)}")
+            traceback.print_exc()
+
+        # 3) Fallback: DuckDB -> pyarrow.RecordBatchReader -> Table
+        try:
+            import duckdb
+            print("Attempting fallback: duckdb.read_parquet -> pyarrow.Table -> datasets.Dataset")
+            tables = []
+            for f in self.data_files:
+                print(f"  duckdb reading {f} ...")
+                # duckdb.query(...).arrow() often returns a RecordBatchReader
+                reader = duckdb.query(f"SELECT * FROM read_parquet('{f}')").arrow()
+                if hasattr(reader, "read_all"):
+                    table = reader.read_all()
+                else:
+                    # try to materialize
+                    try:
+                        table = pa.Table.from_batches(list(reader))
+                    except Exception:
+                        # last resort: use duckdb to pandas (can be heavy)
+                        print("duckdb.arrow() not usable -> fallback to duckdb.df() (pandas)")
+                        df = duckdb.query(f"SELECT * FROM read_parquet('{f}')").df()
+                        table = pa.Table.from_pandas(df)
+                tables.append(table)
+
+            combined = pa.concat_tables(tables) if len(tables) > 1 else tables[0]
+            self.dataframe = table_to_hf_dataset(combined)
+            print(f"Loaded dataset via duckdb fallback: {len(self.dataframe)} examples")
+            self.dataframe = self.maybe_filter_out_long_prompts(self.dataframe)
+            return
+        except Exception as e_duck:
+            print(f"DuckDB fallback failed: {repr(e_duck)}")
+            traceback.print_exc()
+
+        # All failed
+        raise RuntimeError("All parquet readers failed; see tracebacks above.")
+
 
     def maybe_filter_out_long_prompts(self, dataframe: datasets.Dataset = None):
         # filter out too long prompts

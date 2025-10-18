@@ -31,7 +31,15 @@ def get_ppo_ray_runtime_env():
     To avoid repeat of some environment variables that are already set.
     """
     runtime_env = {"env_vars": PPO_RAY_RUNTIME_ENV["env_vars"].copy()}
+    
+    # Explicitly pass PYTHONPATH to Ray workers for custom model registration
+    if os.environ.get("PYTHONPATH") is not None:
+        runtime_env["env_vars"]["PYTHONPATH"] = os.environ["PYTHONPATH"]
+    
     for key in list(runtime_env["env_vars"].keys()):
+        # Don't remove PYTHONPATH even if it's already set
+        if key == "PYTHONPATH":
+            continue
         if os.environ.get(key) is not None:
             runtime_env["env_vars"].pop(key, None)
     return runtime_env
