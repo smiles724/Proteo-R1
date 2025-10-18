@@ -3,6 +3,7 @@ from typing import Protocol, runtime_checkable
 from rllm.agents.agent import Action
 from rllm.rewards.code_reward import RewardCodeFn
 from rllm.rewards.math_reward import RewardMathFn
+from rllm.rewards.protein_reward import RewardProteinFn
 from rllm.rewards.reward_types import RewardConfig, RewardInput, RewardOutput
 from rllm.rewards.search_reward import RewardSearchFn
 
@@ -96,4 +97,20 @@ def code_reward_fn(task_info: dict, action: str) -> RewardOutput:
     reward_fn = RewardCodeFn(reward_config)
     if isinstance(action, Action):
         action = action.action
+    return reward_fn(task_info, action)
+
+
+def protein_reward_fn(task_info: dict, action: str) -> RewardOutput:
+    """
+    A reward function for protein tasks that implements the RewardFunction protocol.
+
+    Args:
+        task: The task dictionary containing data_source, ground_truth and other metadata
+        action: The agent's response/solution
+
+    Returns:
+        float: The calculated reward value based on math evaluation
+    """
+    reward_config = RewardConfig()
+    reward_fn = RewardProteinFn(reward_config)
     return reward_fn(task_info, action)

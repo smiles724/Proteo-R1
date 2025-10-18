@@ -19,6 +19,8 @@ from rllm.trainer.verl.ray_runtime_env import get_ppo_ray_runtime_env
 from verl.trainer.ppo.reward import load_reward_manager
 from verl.utils.device import is_cuda_available
 
+_debugger_state = {"status": "not_checked"}
+
 
 @hydra.main(config_path="../config", config_name="agent_ppo_trainer", version_base=None)
 def main(config):
@@ -72,9 +74,43 @@ class TaskRunner:
         # Print the initial configuration. `resolve=True` will evaluate symbolic values.
         from pprint import pprint
 
+        import filelock
         from omegaconf import OmegaConf
 
         from verl.utils.fs import copy_to_local
+
+        if False:  # _debugger_state["status"] == "not_checked":
+            import debugpy
+
+            debug_port = 41583
+            lock_path = "/tmp/cursor_ray_debug.lock"
+            lock = filelock.FileLock(lock_path)
+
+            try:
+                # Attempt to acquire the lock. If it fails, another process has it.
+                lock.acquire(timeout=0)
+
+                # If we get here, this process is responsible for starting the debugger.
+                try:
+                    print(f"🐛 Lock acquired by PID {os.getpid()}. Attempting to start debug server on port {debug_port}...")
+                    debugpy.listen(("0.0.0.0", debug_port))
+                    _debugger_state["status"] = "debugger_process"
+                    print("🐛 Debugpy server started successfully. Waiting for debugger to attach...")
+                    debugpy.wait_for_client()
+                    print(f"🐛 Debugger attached to PID {os.getpid()}!")
+                    # The lock is intentionally not released to prevent other processes from trying.
+                except (RuntimeError, OSError) as e:
+                    print(f"🔥🔥🔥 FATAL: PID {os.getpid()} acquired the lock but failed to start debug server: {e}")
+                    print("🔥🔥🔥 ACTION REQUIRED: Please ensure port 41583 is free or choose a different port.")
+                    _debugger_state["status"] = "failed_to_start"
+                    lock.release()  # Release the lock since we failed.
+
+            except filelock.Timeout:
+                # Another process has the lock. This one will continue normally.
+                _debugger_state["status"] = "worker_process"
+                # This message is no longer needed as it creates log spam.
+                # print(f"PID {os.getpid()} did not acquire lock, continuing normally.")
+                pass
 
         print(f"TaskRunner hostname: {socket.gethostname()}, PID: {os.getpid()}")
         OmegaConf.register_new_resolver("mul", lambda x, y: int(x) * int(y))
@@ -84,6 +120,11 @@ class TaskRunner:
         # Download the checkpoint from HDFS to the local machine.
         # `use_shm` determines whether to use shared memory, which could lead to faster model loading if turned on
         local_path = copy_to_local(config.actor_rollout_ref.model.path, use_shm=config.actor_rollout_ref.model.get("use_shm", False))
+
+        # Import external libraries (e.g., custom model registration) before loading tokenizer/model
+        from verl.utils.import_utils import import_external_libs
+
+        import_external_libs(config.actor_rollout_ref.model.get("external_lib", None))
 
         # Instantiate the tokenizer and processor.
         from verl.utils import hf_tokenizer

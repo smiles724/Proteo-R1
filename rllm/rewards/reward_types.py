@@ -21,6 +21,10 @@ class RewardConfig:
     # Config for cot-based rewards
     cot_reward_weight: float = 0.0
 
+    # Config for bio/protein-based rewards
+    bio_task: str = "property_prediction"  # Options: "function", "inverse_folding", "property_prediction"
+    use_bio_orm: bool = False
+
     # General reward constants
     correct_reward: float = 1.0
     incorrect_reward: float = 0.0
