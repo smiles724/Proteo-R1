@@ -1,4 +1,7 @@
+
 Based on https://github.com/smiles724/ProteinFM/blob/clean_sft/src/protein_llm/models
+main file: modeling_pllm.py
+replay version of export qkv (for testing): modeling_pllm_qkv_v2.py
 Added qkv_export to export qkv after forward:
 simple usage:
 ```python
