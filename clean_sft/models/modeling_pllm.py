@@ -252,6 +252,95 @@ class PLLM(PreTrainedModel, GenerationMixin):
         # return prot_tok, prot_mask
 
         return seq_tok, seq_mask, struct_tok, struct_mask
+    
+    def encode_chainwise_batch(
+        self,
+        aa_chains: List[Optional[List[str]]],
+        stru_chains: List[Optional[List[str]]],
+    ):
+        """
+        Chain-level encoding for a batch.
+        Inputs:
+        aa_chains:   list (len=B). Each entry is None or a list[str] (one per chain).
+        stru_chains: list (len=B). Each entry is None or a list[str] (one per chain).
+
+        Returns:
+        seq_embeds_per_sample:   List[List[Tensor]], each Tensor is [L_chain, 1024]
+        struct_embeds_per_sample:List[List[Tensor]], each Tensor is [L_chain, 1024]
+        seq_lens_per_sample:     List[List[int]]
+        struct_lens_per_sample:  List[List[int]]
+        """
+        B = len(aa_chains)
+        device = self.device
+        dtype = next(self.llm.parameters()).dtype
+
+        # --- flatten chain strings for batched encoding ---
+        aa_flat, aa_map = [], []   # (sample_idx, chain_idx)
+        st_flat, st_map = [], []
+
+        for b in range(B):
+            # sequences
+            if aa_chains[b] is not None:
+                for c_idx, seq in enumerate(aa_chains[b]):
+                    if seq and len(seq) > 0:
+                        aa_flat.append(seq)
+                        aa_map.append((b, c_idx))
+            # structures
+            if stru_chains[b] is not None:
+                for c_idx, s in enumerate(stru_chains[b]):
+                    if s and len(s) > 0:
+                        st_flat.append(s)
+                        st_map.append((b, c_idx))
+
+        # --- run encoders (batched across all chains) ---
+        seq_emb = None
+        seq_msk = None
+        if len(aa_flat) > 0:
+            seq_emb, seq_msk, _ = self.protein_encoder(aa_flat, get_mask_logits=False, device=device)  # [N_seq, Ls, 1024], [N_seq, Ls]
+        st_emb = None
+        st_msk = None
+        if len(st_flat) > 0:
+            st_emb, st_msk, _ = self.structure_encoder.get_repr(st_flat, batch_size=max(1, len(st_flat)), verbose=False)  # [N_st, Lt, 1024], [N_st, Lt]
+
+        # --- regroup by (b, chain) and clip to valid token lengths ---
+        seq_embeds_per_sample: List[List[torch.Tensor]] = [[] for _ in range(B)]
+        struct_embeds_per_sample: List[List[torch.Tensor]] = [[] for _ in range(B)]
+        seq_lens_per_sample: List[List[int]] = [[] for _ in range(B)]
+        struct_lens_per_sample: List[List[int]] = [[] for _ in range(B)]
+
+        if seq_emb is not None:
+            for i, (b, c) in enumerate(aa_map):
+                valid_len = int(seq_msk[i].sum().item())
+                if valid_len > 0:
+                    seq_embeds_per_sample[b].append(seq_emb[i, :valid_len].to(device=device, dtype=dtype))
+                    seq_lens_per_sample[b].append(valid_len)
+                else:
+                    seq_embeds_per_sample[b].append(torch.empty(0, seq_emb.size(-1), device=device, dtype=dtype))
+                    seq_lens_per_sample[b].append(0)
+
+        if st_emb is not None:
+            for i, (b, c) in enumerate(st_map):
+                valid_len = int(st_msk[i].sum().item())
+                if valid_len > 0:
+                    struct_embeds_per_sample[b].append(st_emb[i, :valid_len].to(device=device, dtype=dtype))
+                    struct_lens_per_sample[b].append(valid_len)
+                else:
+                    struct_embeds_per_sample[b].append(torch.empty(0, st_emb.size(-1), device=device, dtype=dtype))
+                    struct_lens_per_sample[b].append(0)
+
+        # For missing sides, keep list sizes consistent with chain counts
+        for b in range(B):
+            n_seq = len(aa_chains[b]) if aa_chains[b] is not None else 0
+            n_st  = len(stru_chains[b]) if stru_chains[b] is not None else 0
+            while len(seq_embeds_per_sample[b]) < n_seq:
+                seq_embeds_per_sample[b].append(torch.empty(0, 1024, device=device, dtype=dtype))
+                seq_lens_per_sample[b].append(0)
+            while len(struct_embeds_per_sample[b]) < n_st:
+                struct_embeds_per_sample[b].append(torch.empty(0, 1024, device=device, dtype=dtype))
+                struct_lens_per_sample[b].append(0)
+
+        return seq_embeds_per_sample, struct_embeds_per_sample, seq_lens_per_sample, struct_lens_per_sample
+
 
     def build_prefix(self, protein_tokens: torch.Tensor) -> torch.Tensor:
         # Per-token MLP to LLM hidden size
@@ -280,144 +369,306 @@ class PLLM(PreTrainedModel, GenerationMixin):
         if input_ids is not None:
             text_embeds = self.get_input_embeddings()(input_ids)
 
+        # #  ====== Normal one string input block ======
+        # if inputs_embeds is None and past_key_values is None:
+        #     if aa_seq is not None and stru_str is not None:
+        #         # prot_tok, prot_mask = self.encode_protein_batch(aa_seq, stru_str)
+        #         # pref = self.build_prefix(prot_tok)
+        #         # inputs_embeds = torch.cat([pref, text_embeds], dim=1)
+        #         # attention_mask = torch.cat([prot_mask.to(attention_mask.dtype), attention_mask], dim=1)
+        #         #
+        #         # if labels is not None:
+        #         #     pad = torch.full((labels.size(0), pref.size(1)), -100, dtype=labels.dtype, device=labels.device)
+        #         #     labels = torch.cat([pad, labels], dim=1)
+
+        #         seq_tok, seq_mask, struct_tok, struct_mask = self.encode_protein_batch(aa_seq, stru_str)
+        #         # seq_tok [B, L, C]
+        #         # seq_mask [B, L]
+        #         # struct_tok [B, L', C]
+        #         # struct_mask [B, L']
+
+        #         B = input_ids.size(0)
+
+        #         # Get position masks for protein and structure tokens
+        #         protein_token_mask = (input_ids == self.config.protein_token_id)  # [B, T]
+        #         structure_token_mask = (input_ids == self.config.structure_token_id)  # [B, T]
+
+        #         # Check if token counts match
+        #         protein_token_count = protein_token_mask.sum(dim=1)  # [B]
+        #         structure_token_count = structure_token_mask.sum(dim=1)  # [B]
+        #         for b_idx in range(B):
+        #             # Check token count for each sample
+        #             expected_protein = 1 if aa_seq[b_idx] is not None and len(aa_seq[b_idx]) > 0 else 0
+        #             expected_structure = 1 if stru_str[b_idx] is not None and len(stru_str[b_idx]) > 0 else 0
+
+        #             if protein_token_count[b_idx] != expected_protein:
+        #                 raise ValueError(
+        #                     f"Sample {b_idx}: protein_token_id count mismatch. "
+        #                     f"Expected {expected_protein}, got {protein_token_count[b_idx]}"
+        #                 )
+        #             if structure_token_count[b_idx] != expected_structure:
+        #                 raise ValueError(
+        #                     f"Sample {b_idx}: structure_token_id count mismatch. "
+        #                     f"Expected {expected_structure}, got {structure_token_count[b_idx]}"
+        #                 )
+
+        #         # Project seq_tok and struct_tok through prefix_mlp
+        #         seq_prefix = self.build_prefix(seq_tok)  # [B, L, H]
+        #         struct_prefix = self.build_prefix(struct_tok)  # [B, L', H]
+
+        #         # Build new sequence for each sample
+        #         new_embeds_list = []
+        #         new_labels_list = [] if labels is not None else None
+        #         new_attn_mask_list = []
+
+        #         for b_idx in range(B):
+        #             curr_embeds = text_embeds[b_idx]  # [T, H]
+        #             curr_attn = attention_mask[b_idx] if attention_mask is not None else None  # [T]
+        #             curr_labels = labels[b_idx] if labels is not None else None  # [T]
+
+        #             # Collect positions and content to insert
+        #             insertions = []  # (position, embed_tensor, label_tensor)
+
+        #             # protein token
+        #             if protein_token_count[b_idx] > 0:
+        #                 protein_pos = torch.where(protein_token_mask[b_idx])[0][0].item()
+        #                 seq_valid_len = seq_mask[b_idx].sum().item()
+        #                 if seq_valid_len > 0:
+        #                     insertions.append((
+        #                         protein_pos,
+        #                         seq_prefix[b_idx, :seq_valid_len],  # [L, H]
+        #                         torch.full((seq_valid_len,), -100, dtype=labels.dtype, device=labels.device) if labels is not None else None
+        #                     ))
+
+        #             # structure token
+        #             if structure_token_count[b_idx] > 0:
+        #                 structure_pos = torch.where(structure_token_mask[b_idx])[0][0].item()
+        #                 struct_valid_len = struct_mask[b_idx].sum().item()
+        #                 if struct_valid_len > 0:
+        #                     insertions.append((
+        #                         structure_pos,
+        #                         struct_prefix[b_idx, :struct_valid_len],  # [L', H]
+        #                         torch.full((struct_valid_len,), -100, dtype=labels.dtype, device=labels.device) if labels is not None else None
+        #                     ))
+
+        #             # Sort by position
+        #             insertions.sort(key=lambda x: x[0])
+
+        #             # Perform replacement: process from back to front to avoid position shift
+        #             embed_parts = []
+        #             label_parts = [] if labels is not None else None
+        #             attn_parts = []
+
+        #             last_pos = 0
+        #             for pos, embed_insert, label_insert in insertions:
+        #                 # Add previous part
+        #                 if pos > last_pos:
+        #                     embed_parts.append(curr_embeds[last_pos:pos])
+        #                     attn_parts.append(curr_attn[last_pos:pos] if curr_attn is not None else torch.ones(pos - last_pos, device=curr_embeds.device))
+        #                     if labels is not None:
+        #                         label_parts.append(curr_labels[last_pos:pos])
+
+        #                 # Add inserted part (replace single token)
+        #                 embed_parts.append(embed_insert)
+        #                 attn_parts.append(torch.ones(embed_insert.size(0), dtype=curr_attn.dtype if curr_attn is not None else torch.long, device=curr_embeds.device))
+        #                 if labels is not None:
+        #                     label_parts.append(label_insert)
+
+        #                 last_pos = pos + 1  # Skip replaced token
+
+        #             # Add remaining part
+        #             if last_pos < curr_embeds.size(0):
+        #                 embed_parts.append(curr_embeds[last_pos:])
+        #                 attn_parts.append(curr_attn[last_pos:] if curr_attn is not None else torch.ones(curr_embeds.size(0) - last_pos, device=curr_embeds.device))
+        #                 if labels is not None:
+        #                     label_parts.append(curr_labels[last_pos:])
+
+        #             # Concatenate
+        #             new_embeds_list.append(torch.cat(embed_parts, dim=0))
+        #             new_attn_mask_list.append(torch.cat(attn_parts, dim=0))
+        #             if labels is not None:
+        #                 new_labels_list.append(torch.cat(label_parts, dim=0))
+
+        #         # Pad all samples to same length
+        #         max_len = max(e.size(0) for e in new_embeds_list)
+        #         inputs_embeds = torch.zeros(B, max_len, self.hidden_size, dtype=text_embeds.dtype, device=text_embeds.device)
+        #         attention_mask = torch.zeros(B, max_len, dtype=attention_mask.dtype if attention_mask is not None else torch.long, device=text_embeds.device)
+        #         if labels is not None:
+        #             new_labels = torch.full((B, max_len), -100, dtype=labels.dtype, device=labels.device)
+
+        #         for b_idx in range(B):
+        #             curr_len = new_embeds_list[b_idx].size(0)
+        #             inputs_embeds[b_idx, :curr_len] = new_embeds_list[b_idx]
+        #             attention_mask[b_idx, :curr_len] = new_attn_mask_list[b_idx]
+        #             if labels is not None:
+        #                 new_labels[b_idx, :curr_len] = new_labels_list[b_idx]
+
+        #         if labels is not None:
+        #             labels = new_labels
+
+        #     elif aa_seq is not None or stru_str is not None:
+        #         raise RuntimeError("aa_seq and stru_str must be given at the same time!")
+        # #  ====== Normal one string input block ends ======
+
+
+
+
+        # #  ====== Multichain input block ======
         if inputs_embeds is None and past_key_values is None:
             if aa_seq is not None and stru_str is not None:
-                # prot_tok, prot_mask = self.encode_protein_batch(aa_seq, stru_str)
-                # pref = self.build_prefix(prot_tok)
-                # inputs_embeds = torch.cat([pref, text_embeds], dim=1)
-                # attention_mask = torch.cat([prot_mask.to(attention_mask.dtype), attention_mask], dim=1)
+                # EXPECTED FORMAT:
+                # aa_seq[b]      is None or List[str]  (per-chain sequences in the same order chains appear in text)
+                # stru_str[b]    is None or List[str]  (per-chain structures aligned to the same chain order)
+                # The prompt contains for each chain:
+                #   <chain_bos> ... "Chain X：" ... <seq_bos> ... <seq_eos> <struct_bos> ... <struct_eos> <chain_eos>
                 #
-                # if labels is not None:
-                #     pad = torch.full((labels.size(0), pref.size(1)), -100, dtype=labels.dtype, device=labels.device)
-                #     labels = torch.cat([pad, labels], dim=1)
-
-                seq_tok, seq_mask, struct_tok, struct_mask = self.encode_protein_batch(aa_seq, stru_str)
-                # seq_tok [B, L, C]
-                # seq_mask [B, L]
-                # struct_tok [B, L', C]
-                # struct_mask [B, L']
+                # We will REPLACE the spans [seq_bos:seq_eos] with the projected sequence encoder tokens,
+                # and the spans [struct_bos:struct_eos] with the projected structure encoder tokens.
+                #
+                # NOTE: All special tokens are LLM tokens coming from PLLMConfig.
+                req_ids = (
+                    hasattr(self.config, "chain_bos_id") and hasattr(self.config, "chain_eos_id") and
+                    hasattr(self.config, "seq_bos_id") and hasattr(self.config, "seq_eos_id") and
+                    hasattr(self.config, "struct_bos_id") and hasattr(self.config, "struct_eos_id")
+                )
+                if not req_ids:
+                    raise ValueError(
+                        "Missing special token IDs in PLLMConfig: "
+                        "chain_bos_id, chain_eos_id, seq_bos_id, seq_eos_id, struct_bos_id, struct_eos_id are required."
+                    )
 
                 B = input_ids.size(0)
+                # 1) Encode all chains (batched), get 1024-D token vectors per chain, then project to LLM hidden size
+                seq_embeds_per_sample, struct_embeds_per_sample, seq_lens_per_sample, struct_lens_per_sample = \
+                    self.encode_chainwise_batch(aa_seq, stru_str)
 
-                # Get position masks for protein and structure tokens
-                protein_token_mask = (input_ids == self.config.protein_token_id)  # [B, T]
-                structure_token_mask = (input_ids == self.config.structure_token_id)  # [B, T]
+                # Project per-chain embeddings to hidden size
+                for b in range(B):
+                    for i in range(len(seq_embeds_per_sample[b])):
+                        if seq_embeds_per_sample[b][i].numel() > 0:
+                            seq_embeds_per_sample[b][i] = self.build_prefix(seq_embeds_per_sample[b][i].unsqueeze(0)).squeeze(0)
+                    for i in range(len(struct_embeds_per_sample[b])):
+                        if struct_embeds_per_sample[b][i].numel() > 0:
+                            struct_embeds_per_sample[b][i] = self.build_prefix(struct_embeds_per_sample[b][i].unsqueeze(0)).squeeze(0)
 
-                # Check if token counts match
-                protein_token_count = protein_token_mask.sum(dim=1)  # [B]
-                structure_token_count = structure_token_mask.sum(dim=1)  # [B]
-                for b_idx in range(B):
-                    # Check token count for each sample
-                    expected_protein = 1 if aa_seq[b_idx] is not None and len(aa_seq[b_idx]) > 0 else 0
-                    expected_structure = 1 if stru_str[b_idx] is not None and len(stru_str[b_idx]) > 0 else 0
-
-                    if protein_token_count[b_idx] != expected_protein:
-                        raise ValueError(
-                            f"Sample {b_idx}: protein_token_id count mismatch. "
-                            f"Expected {expected_protein}, got {protein_token_count[b_idx]}"
-                        )
-                    if structure_token_count[b_idx] != expected_structure:
-                        raise ValueError(
-                            f"Sample {b_idx}: structure_token_id count mismatch. "
-                            f"Expected {expected_structure}, got {structure_token_count[b_idx]}"
-                        )
-
-                # Project seq_tok and struct_tok through prefix_mlp
-                seq_prefix = self.build_prefix(seq_tok)  # [B, L, H]
-                struct_prefix = self.build_prefix(struct_tok)  # [B, L', H]
-
-                # Build new sequence for each sample
-                new_embeds_list = []
+                # 2) For each sample, walk the text tokens and splice in chain spans
+                new_embeds_list, new_attn_mask_list = [], []
                 new_labels_list = [] if labels is not None else None
-                new_attn_mask_list = []
 
-                for b_idx in range(B):
-                    curr_embeds = text_embeds[b_idx]  # [T, H]
-                    curr_attn = attention_mask[b_idx] if attention_mask is not None else None  # [T]
-                    curr_labels = labels[b_idx] if labels is not None else None  # [T]
+                for b in range(B):
+                    curr_embeds = text_embeds[b]                 # [T, H]
+                    curr_attn = attention_mask[b] if attention_mask is not None else None  # [T]
+                    curr_labels = labels[b] if labels is not None else None               # [T]
+                    ids = input_ids[b]                           # [T]
 
-                    # Collect positions and content to insert
-                    insertions = []  # (position, embed_tensor, label_tensor)
+                    seq_bos_id = self.config.seq_bos_id
+                    seq_eos_id = self.config.seq_eos_id
+                    struct_bos_id = self.config.struct_bos_id
+                    struct_eos_id = self.config.struct_eos_id
 
-                    # protein token
-                    if protein_token_count[b_idx] > 0:
-                        protein_pos = torch.where(protein_token_mask[b_idx])[0][0].item()
-                        seq_valid_len = seq_mask[b_idx].sum().item()
-                        if seq_valid_len > 0:
-                            insertions.append((
-                                protein_pos,
-                                seq_prefix[b_idx, :seq_valid_len],  # [L, H]
-                                torch.full((seq_valid_len,), -100, dtype=labels.dtype, device=labels.device) if labels is not None else None
-                            ))
+                    # Find all seq and struct spans
+                    seq_bos_pos = (ids == seq_bos_id).nonzero(as_tuple=False).flatten().tolist()
+                    seq_eos_pos = (ids == seq_eos_id).nonzero(as_tuple=False).flatten().tolist()
+                    st_bos_pos  = (ids == struct_bos_id).nonzero(as_tuple=False).flatten().tolist()
+                    st_eos_pos  = (ids == struct_eos_id).nonzero(as_tuple=False).flatten().tolist()
 
-                    # structure token
-                    if structure_token_count[b_idx] > 0:
-                        structure_pos = torch.where(structure_token_mask[b_idx])[0][0].item()
-                        struct_valid_len = struct_mask[b_idx].sum().item()
-                        if struct_valid_len > 0:
-                            insertions.append((
-                                structure_pos,
-                                struct_prefix[b_idx, :struct_valid_len],  # [L', H]
-                                torch.full((struct_valid_len,), -100, dtype=labels.dtype, device=labels.device) if labels is not None else None
-                            ))
+                    if len(seq_bos_pos) != len(seq_eos_pos):
+                        raise ValueError(f"Sample {b}: unmatched <seq_bos>/<seq_eos> count.")
+                    if len(st_bos_pos) != len(st_eos_pos):
+                        raise ValueError(f"Sample {b}: unmatched <struct_bos>/<struct_eos> count.")
 
-                    # Sort by position
-                    insertions.sort(key=lambda x: x[0])
+                    n_seq_chains = len(seq_bos_pos)
+                    n_st_chains  = len(st_bos_pos)
+                    # Validate against provided chain lists
+                    if aa_seq[b] is not None and len(aa_seq[b]) != n_seq_chains:
+                        raise ValueError(f"Sample {b}: number of sequence chains mismatch: prompt has {n_seq_chains}, data has {len(aa_seq[b])}.")
+                    if stru_str[b] is not None and len(stru_str[b]) != n_st_chains:
+                        raise ValueError(f"Sample {b}: number of structure chains mismatch: prompt has {n_st_chains}, data has {len(stru_str[b])}.")
 
-                    # Perform replacement: process from back to front to avoid position shift
-                    embed_parts = []
-                    label_parts = [] if labels is not None else None
-                    attn_parts = []
+                    # Build a unified list of "replacement intervals"
+                    # For each interval, we store (start_idx, end_idx_inclusive, embed_tensor, label_tensor)
+                    intervals = []
 
-                    last_pos = 0
-                    for pos, embed_insert, label_insert in insertions:
-                        # Add previous part
-                        if pos > last_pos:
-                            embed_parts.append(curr_embeds[last_pos:pos])
-                            attn_parts.append(curr_attn[last_pos:pos] if curr_attn is not None else torch.ones(pos - last_pos, device=curr_embeds.device))
+                    # Sequence intervals per chain
+                    for c in range(n_seq_chains):
+                        s, e = seq_bos_pos[c], seq_eos_pos[c]
+                        if not (0 <= s <= e < curr_embeds.size(0)):
+                            raise ValueError(f"Sample {b}: invalid seq span ({s},{e}).")
+                        chain_embed = seq_embeds_per_sample[b][c] if aa_seq[b] is not None else torch.empty(0, self.hidden_size, device=curr_embeds.device, dtype=curr_embeds.dtype)
+                        if chain_embed.numel() > 0:
+                            lab = torch.full((chain_embed.size(0),), -100, dtype=labels.dtype, device=labels.device) if labels is not None else None
+                            intervals.append((s, e, chain_embed, lab))
+
+                    # Structure intervals per chain
+                    for c in range(n_st_chains):
+                        s, e = st_bos_pos[c], st_eos_pos[c]
+                        if not (0 <= s <= e < curr_embeds.size(0)):
+                            raise ValueError(f"Sample {b}: invalid struct span ({s},{e}).")
+                        chain_embed = struct_embeds_per_sample[b][c] if stru_str[b] is not None else torch.empty(0, self.hidden_size, device=curr_embeds.device, dtype=curr_embeds.dtype)
+                        if chain_embed.numel() > 0:
+                            lab = torch.full((chain_embed.size(0),), -100, dtype=labels.dtype, device=labels.device) if labels is not None else None
+                            intervals.append((s, e, chain_embed, lab))
+
+                    # Sort intervals by start index (non-overlapping by design)
+                    intervals.sort(key=lambda x: x[0])
+
+                    # Splice: take pieces outside spans + inserted embeddings for spans
+                    parts_e, parts_a = [], []
+                    parts_l = [] if labels is not None else None
+                    cursor = 0
+
+                    for (start, end_incl, emb_ins, lab_ins) in intervals:
+                        # Left region
+                        if start > cursor:
+                            parts_e.append(curr_embeds[cursor:start])
+                            parts_a.append(curr_attn[cursor:start] if curr_attn is not None else torch.ones(start - cursor, device=curr_embeds.device, dtype=torch.long))
                             if labels is not None:
-                                label_parts.append(curr_labels[last_pos:pos])
-
-                        # Add inserted part (replace single token)
-                        embed_parts.append(embed_insert)
-                        attn_parts.append(torch.ones(embed_insert.size(0), dtype=curr_attn.dtype if curr_attn is not None else torch.long, device=curr_embeds.device))
+                                parts_l.append(curr_labels[cursor:start])
+                        # Inserted encoder-derived span
+                        parts_e.append(emb_ins)
+                        parts_a.append(torch.ones(emb_ins.size(0), device=curr_embeds.device, dtype=(curr_attn.dtype if curr_attn is not None else torch.long)))
                         if labels is not None:
-                            label_parts.append(label_insert)
+                            parts_l.append(lab_ins)
+                        # Skip original [start:end_incl] inclusive
+                        cursor = end_incl + 1
 
-                        last_pos = pos + 1  # Skip replaced token
-
-                    # Add remaining part
-                    if last_pos < curr_embeds.size(0):
-                        embed_parts.append(curr_embeds[last_pos:])
-                        attn_parts.append(curr_attn[last_pos:] if curr_attn is not None else torch.ones(curr_embeds.size(0) - last_pos, device=curr_embeds.device))
+                    # Tail
+                    if cursor < curr_embeds.size(0):
+                        parts_e.append(curr_embeds[cursor:])
+                        parts_a.append(curr_attn[cursor:] if curr_attn is not None else torch.ones(curr_embeds.size(0) - cursor, device=curr_embeds.device, dtype=torch.long))
                         if labels is not None:
-                            label_parts.append(curr_labels[last_pos:])
+                            parts_l.append(curr_labels[cursor:])
 
-                    # Concatenate
-                    new_embeds_list.append(torch.cat(embed_parts, dim=0))
-                    new_attn_mask_list.append(torch.cat(attn_parts, dim=0))
+                    # Concat
+                    new_e = torch.cat(parts_e, dim=0) if len(parts_e) > 0 else curr_embeds
+                    new_a = torch.cat(parts_a, dim=0) if len(parts_a) > 0 else (curr_attn if curr_attn is not None else torch.ones_like(ids))
+
+                    new_embeds_list.append(new_e)
+                    new_attn_mask_list.append(new_a)
                     if labels is not None:
-                        new_labels_list.append(torch.cat(label_parts, dim=0))
+                        new_l = torch.cat(parts_l, dim=0) if len(parts_l) > 0 else curr_labels
+                        new_labels_list.append(new_l)
 
-                # Pad all samples to same length
+                # Pad across batch
                 max_len = max(e.size(0) for e in new_embeds_list)
                 inputs_embeds = torch.zeros(B, max_len, self.hidden_size, dtype=text_embeds.dtype, device=text_embeds.device)
-                attention_mask = torch.zeros(B, max_len, dtype=attention_mask.dtype if attention_mask is not None else torch.long, device=text_embeds.device)
+                attention_mask = torch.zeros(B, max_len, dtype=(attention_mask.dtype if attention_mask is not None else torch.long), device=text_embeds.device)
                 if labels is not None:
                     new_labels = torch.full((B, max_len), -100, dtype=labels.dtype, device=labels.device)
 
-                for b_idx in range(B):
-                    curr_len = new_embeds_list[b_idx].size(0)
-                    inputs_embeds[b_idx, :curr_len] = new_embeds_list[b_idx]
-                    attention_mask[b_idx, :curr_len] = new_attn_mask_list[b_idx]
+                for b in range(B):
+                    Lb = new_embeds_list[b].size(0)
+                    inputs_embeds[b, :Lb] = new_embeds_list[b]
+                    attention_mask[b, :Lb] = new_attn_mask_list[b]
                     if labels is not None:
-                        new_labels[b_idx, :curr_len] = new_labels_list[b_idx]
-
+                        new_labels[b, :Lb] = new_labels_list[b]
                 if labels is not None:
                     labels = new_labels
 
             elif aa_seq is not None or stru_str is not None:
                 raise RuntimeError("aa_seq and stru_str must be given at the same time!")
+            
+        #  ====== Multichain input block end ======
 
         if inputs_embeds is None and text_embeds is not None:
             inputs_embeds = text_embeds
