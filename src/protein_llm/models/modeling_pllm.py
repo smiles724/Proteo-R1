@@ -9,11 +9,12 @@ import torch.nn as nn
 from transformers import AutoTokenizer, AutoModelForCausalLM, PreTrainedModel, GenerationMixin, AutoConfig
 
 import protein_llm
+from protein_llm.data.data_collator import ProteinLLMChainDataCollator
+from protein_llm.data.dataset import ProteinLLMChainDataset
 from protein_llm.models.configuration_pllm import PLLMConfig
 
 import protein_llm.models.protein_encoder as protein_encoder_mod
 import protein_llm.models.structure_encoder as structure_encoder_mod
-from protein_llm.utils.sft import create_sft_training_data_simple
 
 try:
     import flash_attn
@@ -51,10 +52,13 @@ class PLLM(PreTrainedModel, GenerationMixin):
         super().__init__(config)
 
         attn_impl = "flash_attention_2" if flash_attn is not None else "sdpa"
+        if attn_impl == "sdpa":
+            print("[WARN] flash_attention_2 is not activated since flash_attn is not supported!")
+
         if config.load_pretrained:
             self.llm = AutoModelForCausalLM.from_pretrained(
                 config.base_model_name_or_path,
-                torch_dtype="auto",
+                torch_dtype="bfloat16" if attn_impl == "flash_attention_2" else "auto",
                 low_cpu_mem_usage=True,
                 attn_implementation=attn_impl,
             )
@@ -68,6 +72,7 @@ class PLLM(PreTrainedModel, GenerationMixin):
 
         # set to False for from_pretrained() after training
         self.config.load_pretrained = False
+        self.config.hidden_size = self.llm.config.hidden_size # for deepspeed
 
         if hasattr(self.llm.config, "use_cache"):
             self.llm.config.use_cache = False
@@ -144,10 +149,18 @@ class PLLM(PreTrainedModel, GenerationMixin):
         # Also sync important config attributes
         if hasattr(self.llm.config, 'eos_token_id'):
             self.config.eos_token_id = self.llm.config.eos_token_id
+        if getattr(self.config, 'eos_token_id', None) is None and hasattr(self.generation_config, 'eos_token_id'):
+            self.config.eos_token_id = self.generation_config.eos_token_id
+
         if hasattr(self.llm.config, 'pad_token_id'):
             self.config.pad_token_id = self.llm.config.pad_token_id
+        if getattr(self.config, 'pad_token_id', None) is None and hasattr(self.generation_config, 'pad_token_id'):
+            self.config.pad_token_id = self.generation_config.pad_token_id
+
         if hasattr(self.llm.config, 'bos_token_id'):
             self.config.bos_token_id = self.llm.config.bos_token_id
+        if getattr(self.config, 'bos_token_id', None) is None and hasattr(self.generation_config, 'bos_token_id'):
+            self.config.bos_token_id = self.generation_config.bos_token_id
 
     def _post_init(self):
         """Called after from_pretrained loads the model."""
@@ -203,6 +216,9 @@ class PLLM(PreTrainedModel, GenerationMixin):
     @property
     def device(self):
         return next(self.llm.parameters()).device
+
+    def freeze_params(self, freeze_choice: str):
+        raise NotImplementedError("")
 
     def encode_protein_batch(self, aa_list, stru_list):
         """
@@ -278,139 +294,221 @@ class PLLM(PreTrainedModel, GenerationMixin):
         if input_ids is not None:
             text_embeds = self.get_input_embeddings()(input_ids)
 
-        if inputs_embeds is None and past_key_values is None:
-            if aa_seq is not None and stru_str is not None:
-                # prot_tok, prot_mask = self.encode_protein_batch(aa_seq, stru_str)
-                # pref = self.build_prefix(prot_tok)
-                # inputs_embeds = torch.cat([pref, text_embeds], dim=1)
-                # attention_mask = torch.cat([prot_mask.to(attention_mask.dtype), attention_mask], dim=1)
-                #
-                # if labels is not None:
-                #     pad = torch.full((labels.size(0), pref.size(1)), -100, dtype=labels.dtype, device=labels.device)
-                #     labels = torch.cat([pad, labels], dim=1)
+        is_first_forward = (
+            past_key_values is None
+            or (hasattr(past_key_values, 'get_seq_length') and past_key_values.get_seq_length() == 0)
+        )
 
+        if inputs_embeds is None and is_first_forward:
+            if aa_seq is not None and stru_str is not None:
                 seq_tok, seq_mask, struct_tok, struct_mask = self.encode_protein_batch(aa_seq, stru_str)
-                # seq_tok [B, L, C]
-                # seq_mask [B, L]
-                # struct_tok [B, L', C]
-                # struct_mask [B, L']
+                # N is the summation of all chains in B, i.e., N >= B
+                # seq_tok [N, L, C]
+                # seq_mask [N, L]
+                # struct_tok [N, L', C]
+                # struct_mask [N, L']
 
                 B = input_ids.size(0)
 
                 # Get position masks for protein and structure tokens
-                protein_token_mask = (input_ids == self.config.protein_token_id)  # [B, T]
-                structure_token_mask = (input_ids == self.config.structure_token_id)  # [B, T]
+                seq_token_mask = (input_ids == self.config.seq_token_id)  # [B, T]
+                structure_token_mask = (input_ids == self.config.struct_token_id)  # [B, T]
 
                 # Check if token counts match
-                protein_token_count = protein_token_mask.sum(dim=1)  # [B]
-                structure_token_count = structure_token_mask.sum(dim=1)  # [B]
-                for b_idx in range(B):
-                    # Check token count for each sample
-                    expected_protein = 1 if aa_seq[b_idx] is not None and len(aa_seq[b_idx]) > 0 else 0
-                    expected_structure = 1 if stru_str[b_idx] is not None and len(stru_str[b_idx]) > 0 else 0
+                seq_token_count = seq_token_mask.sum()
+                structure_token_count = structure_token_mask.sum()
 
-                    if protein_token_count[b_idx] != expected_protein:
-                        raise ValueError(
-                            f"Sample {b_idx}: protein_token_id count mismatch. "
-                            f"Expected {expected_protein}, got {protein_token_count[b_idx]}"
-                        )
-                    if structure_token_count[b_idx] != expected_structure:
-                        raise ValueError(
-                            f"Sample {b_idx}: structure_token_id count mismatch. "
-                            f"Expected {expected_structure}, got {structure_token_count[b_idx]}"
-                        )
+                if seq_token_count != seq_tok.size(0):
+                    raise ValueError(
+                        f"seq_token_id count mismatch. Expected {seq_tok.size(0)}, got {seq_token_count}"
+                    )
+                if structure_token_count != struct_tok.size(0):
+                    raise ValueError(
+                        f"struct_token_id count mismatch. Expected {struct_tok.size(0)}, got {structure_token_count}"
+                    )
 
                 # Project seq_tok and struct_tok through prefix_mlp
-                seq_prefix = self.build_prefix(seq_tok)  # [B, L, H]
-                struct_prefix = self.build_prefix(struct_tok)  # [B, L', H]
+                seq_prefix = self.build_prefix(seq_tok)  # [N, L, H]
+                struct_prefix = self.build_prefix(struct_tok)  # [N, L', H]
 
-                # Build new sequence for each sample
-                new_embeds_list = []
-                new_labels_list = [] if labels is not None else None
-                new_attn_mask_list = []
+                seq_counter = 0
+                struct_counter = 0
+                batch_to_chains = []  # [(seq_indices, struct_indices), ...]
+
+                # Step 1: Build batch to chain mapping
+                for b_idx in range(B):
+                    seq_count = seq_token_mask[b_idx].sum().item()
+                    struct_count = structure_token_mask[b_idx].sum().item()
+
+                    seq_indices = list(range(seq_counter, seq_counter + seq_count))
+                    struct_indices = list(range(struct_counter, struct_counter + struct_count))
+                    batch_to_chains.append((seq_indices, struct_indices))
+
+                    seq_counter += seq_count
+                    struct_counter += struct_count
+
+                # Step 2: Calculate total valid length to insert for each sample
+                total_insert_lens = []
+                for b_idx in range(B):
+                    seq_indices, struct_indices = batch_to_chains[b_idx]
+
+                    # Calculate sum of valid lengths for all seqs
+                    seq_valid_len = seq_mask[seq_indices].sum().item() if seq_indices else 0
+                    # Calculate sum of valid lengths for all structs
+                    struct_valid_len = struct_mask[struct_indices].sum().item() if struct_indices else 0
+                    total_insert_lens.append(seq_valid_len + struct_valid_len)
+
+                # Step 3: Calculate text valid lengths and simulate max length after insertion
+                text_valid_lens = attention_mask.sum(dim=1).tolist() if attention_mask is not None \
+                                  else [input_ids.size(1)] * B
+                new_lens = []
 
                 for b_idx in range(B):
-                    curr_embeds = text_embeds[b_idx]  # [T, H]
-                    curr_attn = attention_mask[b_idx] if attention_mask is not None else None  # [T]
-                    curr_labels = labels[b_idx] if labels is not None else None  # [T]
+                    # new_length = original_text_valid_length - num_special_tokens_replaced + inserted_valid_length
+                    num_special_tokens = seq_token_mask[b_idx].sum().item() + structure_token_mask[b_idx].sum().item()
+                    new_len = text_valid_lens[b_idx] - num_special_tokens + total_insert_lens[b_idx]
+                    new_lens.append(new_len)
 
-                    # Collect positions and content to insert
-                    insertions = []  # (position, embed_tensor, label_tensor)
+                max_len = max(new_lens)
 
-                    # protein token
-                    if protein_token_count[b_idx] > 0:
-                        protein_pos = torch.where(protein_token_mask[b_idx])[0][0].item()
-                        seq_valid_len = seq_mask[b_idx].sum().item()
-                        if seq_valid_len > 0:
-                            insertions.append((
-                                protein_pos,
-                                seq_prefix[b_idx, :seq_valid_len],  # [L, H]
-                                torch.full((seq_valid_len,), -100, dtype=labels.dtype, device=labels.device) if labels is not None else None
-                            ))
-
-                    # structure token
-                    if structure_token_count[b_idx] > 0:
-                        structure_pos = torch.where(structure_token_mask[b_idx])[0][0].item()
-                        struct_valid_len = struct_mask[b_idx].sum().item()
-                        if struct_valid_len > 0:
-                            insertions.append((
-                                structure_pos,
-                                struct_prefix[b_idx, :struct_valid_len],  # [L', H]
-                                torch.full((struct_valid_len,), -100, dtype=labels.dtype, device=labels.device) if labels is not None else None
-                            ))
-
-                    # Sort by position
-                    insertions.sort(key=lambda x: x[0])
-
-                    # Perform replacement: process from back to front to avoid position shift
-                    embed_parts = []
-                    label_parts = [] if labels is not None else None
-                    attn_parts = []
-
-                    last_pos = 0
-                    for pos, embed_insert, label_insert in insertions:
-                        # Add previous part
-                        if pos > last_pos:
-                            embed_parts.append(curr_embeds[last_pos:pos])
-                            attn_parts.append(curr_attn[last_pos:pos] if curr_attn is not None else torch.ones(pos - last_pos, device=curr_embeds.device))
-                            if labels is not None:
-                                label_parts.append(curr_labels[last_pos:pos])
-
-                        # Add inserted part (replace single token)
-                        embed_parts.append(embed_insert)
-                        attn_parts.append(torch.ones(embed_insert.size(0), dtype=curr_attn.dtype if curr_attn is not None else torch.long, device=curr_embeds.device))
-                        if labels is not None:
-                            label_parts.append(label_insert)
-
-                        last_pos = pos + 1  # Skip replaced token
-
-                    # Add remaining part
-                    if last_pos < curr_embeds.size(0):
-                        embed_parts.append(curr_embeds[last_pos:])
-                        attn_parts.append(curr_attn[last_pos:] if curr_attn is not None else torch.ones(curr_embeds.size(0) - last_pos, device=curr_embeds.device))
-                        if labels is not None:
-                            label_parts.append(curr_labels[last_pos:])
-
-                    # Concatenate
-                    new_embeds_list.append(torch.cat(embed_parts, dim=0))
-                    new_attn_mask_list.append(torch.cat(attn_parts, dim=0))
-                    if labels is not None:
-                        new_labels_list.append(torch.cat(label_parts, dim=0))
-
-                # Pad all samples to same length
-                max_len = max(e.size(0) for e in new_embeds_list)
-                inputs_embeds = torch.zeros(B, max_len, self.hidden_size, dtype=text_embeds.dtype, device=text_embeds.device)
-                attention_mask = torch.zeros(B, max_len, dtype=attention_mask.dtype if attention_mask is not None else torch.long, device=text_embeds.device)
+                # Step 4: Create canvas
+                pad_token_id = self.config.pad_token_id
+                if pad_token_id is None:
+                    pad_token_id = input_ids[~attention_mask.bool()][0]
+                dummy_pad_ids = torch.full((1, 1), fill_value=pad_token_id, dtype=input_ids.dtype, device=input_ids.device)
+                inputs_embeds = self.get_input_embeddings()(dummy_pad_ids).expand(B, max_len, -1).clone()
+                new_attention_mask = torch.zeros(B, max_len, dtype=torch.long, device=text_embeds.device)
                 if labels is not None:
                     new_labels = torch.full((B, max_len), -100, dtype=labels.dtype, device=labels.device)
 
-                for b_idx in range(B):
-                    curr_len = new_embeds_list[b_idx].size(0)
-                    inputs_embeds[b_idx, :curr_len] = new_embeds_list[b_idx]
-                    attention_mask[b_idx, :curr_len] = new_attn_mask_list[b_idx]
-                    if labels is not None:
-                        new_labels[b_idx, :curr_len] = new_labels_list[b_idx]
+                # Step 5: Build global bool masks and source index mapping
+                text_fill_mask = torch.zeros(B, max_len, dtype=torch.bool, device=text_embeds.device)
+                seq_fill_mask = torch.zeros(B, max_len, dtype=torch.bool, device=text_embeds.device)
+                struct_fill_mask = torch.zeros(B, max_len, dtype=torch.bool, device=text_embeds.device)
 
+                for b_idx in range(B):
+                    seq_indices, struct_indices = batch_to_chains[b_idx]
+                    seq_positions = torch.where(seq_token_mask[b_idx])[0].tolist()
+                    struct_positions = torch.where(structure_token_mask[b_idx])[0].tolist()
+
+                    # Build insertion point info
+                    insertions = []
+                    for pos, chain_idx in zip(seq_positions, seq_indices):
+                        valid_len = seq_mask[chain_idx].sum().item()
+                        if valid_len > 0:
+                            insertions.append((pos, 'seq', chain_idx, valid_len))
+
+                    for pos, chain_idx in zip(struct_positions, struct_indices):
+                        valid_len = struct_mask[chain_idx].sum().item()
+                        if valid_len > 0:
+                            insertions.append((pos, 'struct', chain_idx, valid_len))
+
+                    insertions.sort(key=lambda x: x[0])
+
+                    # Set masks and source indices
+                    new_pos = 0
+                    src_pos = 0
+
+                    for orig_pos, insert_type, chain_idx, valid_len in insertions:
+                        # Set text part
+                        text_fill_len = orig_pos - src_pos
+                        text_fill_mask[b_idx, new_pos: new_pos + text_fill_len] = True
+                        new_pos += text_fill_len
+
+                        if insert_type == 'seq':
+                            seq_fill_mask[b_idx, new_pos: new_pos + valid_len] = True
+                        else:  # 'struct'
+                            struct_fill_mask[b_idx, new_pos: new_pos + valid_len] = True
+                        new_pos += valid_len
+
+                        src_pos = orig_pos + 1
+
+                    # Remaining text part
+                    text_fill_len = attention_mask[b_idx].sum().item() - src_pos
+                    text_fill_mask[b_idx, new_pos: new_pos + text_fill_len] = True
+                    new_pos += text_fill_len
+
+                    assert new_pos == new_lens[b_idx], \
+                        f"Position mismatch at batch {b_idx}: new_pos={new_pos}, expected={new_lens[b_idx]}"
+
+                # Step 6: Batch fill using bool masks
+                non_protein_token_mask = torch.logical_and(~seq_token_mask, ~structure_token_mask)  # [B, T]
+                valid_non_protein_token_mask = torch.logical_and(non_protein_token_mask, attention_mask.bool())  # [B, T]
+
+                # # Debug check: verify mask size consistency
+                # assert text_fill_mask.sum() == valid_non_protein_token_mask.sum(), \
+                #     f"Text mask size mismatch: {text_fill_mask.sum()} vs {valid_non_protein_token_mask.sum()}"
+                # assert seq_fill_mask.sum() == seq_mask.sum(), \
+                #     f"Seq mask size mismatch: {seq_fill_mask.sum()} vs {seq_mask.sum()}"
+                # assert struct_fill_mask.sum() == struct_mask.sum(), \
+                #     f"Struct mask size mismatch: {struct_fill_mask.sum()} vs {struct_mask.sum()}"
+                #
+                # # Check total fill mask sum for each batch
+                # for b_idx in range(B):
+                #     total_fill = (text_fill_mask[b_idx].sum() + seq_fill_mask[b_idx].sum() + struct_fill_mask[b_idx].sum()).item()
+                #     assert total_fill == new_lens[b_idx], \
+                #         f"Batch {b_idx} fill mask sum mismatch: {total_fill} vs {new_lens[b_idx]}"
+
+                # Fill text
+                if text_fill_mask.any():
+                    inputs_embeds[text_fill_mask] = text_embeds[valid_non_protein_token_mask]
+                    if attention_mask is not None:
+                        new_attention_mask[text_fill_mask] = attention_mask[valid_non_protein_token_mask]
+                    else:
+                        new_attention_mask[text_fill_mask] = 1
+                    if labels is not None:
+                        new_labels[text_fill_mask] = labels[valid_non_protein_token_mask]
+
+                # Fill seq
+                if seq_fill_mask.any():
+                    inputs_embeds[seq_fill_mask] = seq_prefix[seq_mask]
+                    new_attention_mask[seq_fill_mask] = 1
+
+                # Fill struct
+                if struct_fill_mask.any():
+                    inputs_embeds[struct_fill_mask] = struct_prefix[struct_mask]
+                    new_attention_mask[struct_fill_mask] = 1
+
+                # # Debug checking: verify masks are mutually exclusive and contiguous
+                # assert torch.logical_and(text_fill_mask, seq_fill_mask).sum() == 0
+                # assert torch.logical_and(text_fill_mask, struct_fill_mask).sum() == 0
+                # assert torch.logical_and(seq_fill_mask, struct_fill_mask).sum() == 0
+                #
+                # for b_idx in range(B):
+                #     assert new_attention_mask[b_idx].sum() == new_lens[b_idx]
+                #
+                #     # Check attention_mask contiguity: 0s and 1s should each be contiguous
+                #     attn_mask_seq = new_attention_mask[b_idx]
+                #     if len(attn_mask_seq) > 1:
+                #         # Find all transition points
+                #         transitions = (attn_mask_seq[1:] - attn_mask_seq[:-1]).nonzero(as_tuple=True)[0]
+                #         # Contiguous 0s and 1s means at most one transition (0->1 or 1->0)
+                #         assert len(transitions) <= 1, \
+                #             f"attention_mask is not contiguous at batch {b_idx}, found {len(transitions)} transitions"
+                #
+                #     # Check labels contiguity: -100 and non-(-100) should each be contiguous
+                #     if labels is not None:
+                #         labels_seq = new_labels[b_idx]
+                #         if len(labels_seq) > 1:
+                #             # Check if it's -100
+                #             is_ignore = (labels_seq == -100)
+                #             # Find all transition points
+                #             transitions = (is_ignore[1:].long() - is_ignore[:-1].long()).nonzero(as_tuple=True)[0]
+                #             assert len(transitions) <= 2, \
+                #                 f"labels is not contiguous at batch {b_idx}, found {len(transitions)} transitions"
+                #
+                #         valid_labels_seq = labels_seq[attn_mask_seq.bool()]
+                #         if len(valid_labels_seq) > 1:
+                #             # Check if it's -100
+                #             is_ignore = (valid_labels_seq == -100)
+                #             # Find all transition points
+                #             transitions = (is_ignore[1:].long() - is_ignore[:-1].long()).nonzero(as_tuple=True)[0]
+                #             # Contiguous -100 and non-(-100) means at most one transition (ignore->valid or valid->ignore)
+                #             assert len(transitions) <= 1, \
+                #                 f"labels is not contiguous at batch {b_idx}, found {len(transitions)} transitions"
+
+                # Update
+                attention_mask = new_attention_mask
                 if labels is not None:
                     labels = new_labels
 
@@ -441,6 +539,9 @@ class PLLM(PreTrainedModel, GenerationMixin):
             inputs_embeds: Optional[torch.Tensor] = None,
             **kwargs
     ):
+        if input_ids.size(0) > 1:
+            raise NotImplementedError("Batch-level generate with left-padding has not been implemented yet.")
+
         aa_seq = kwargs.pop("aa_seq", None)
         stru_str = kwargs.pop("stru_str", None)
 
@@ -468,25 +569,23 @@ def test():
     print(args.llm_name)
 
     pretrained_root = f"{dirname(protein_llm.__file__)}/../../pretrained"
-
-    user_prompt = (
-        "You are a professional protein biologist. "
-        "Based only on the provided inputs, produce a natural, concise, and biologically accurate description of the protein. "
-        "First reason step by step inside a <thinking> block using sequence-derived evidence and structural cues, "
-        "then provide the final 2–4 sentence description inside an <answer> block.\n\n"
-        "Inputs:\n"
-        "Protein: <protein>\n"
-        "Structure: <structure>"
-    )
-
-    aa_seq = "MSKGTPSRGKRQTQTHLTCRRCGRMSYHKRHKICSSCGFGRSTRMRSYGWITKRPKVATH"
-    structure = "<|chain:A|> <|chain_sep|> #ddddvvvvpppddqfdqdppprdraqgpvqragpqqggpndpggdddpvvddddpdddd"
+    data_root = f"{dirname(protein_llm.__file__)}/../../data"
 
     tokenizer = AutoTokenizer.from_pretrained(args.llm_name, use_fast=True)
-    tokenizer.add_tokens("<protein>")
-    tokenizer.add_tokens("<structure>")
-    protein_token_id = tokenizer("<protein>", add_special_tokens=False).input_ids[-1]
-    structure_token_id = tokenizer("<structure>", add_special_tokens=False).input_ids[-1]
+
+    dataset = ProteinLLMChainDataset(
+        data_path=f"{data_root}/pdb_sft_debug100_1021.jsonl",
+        tokenizer=tokenizer,
+    )
+    data_collator = ProteinLLMChainDataCollator(tokenizer=tokenizer)
+
+    seq_token_id = tokenizer("<aa_seq>", add_special_tokens=False).input_ids
+    assert len(seq_token_id) == 1
+    seq_token_id = seq_token_id[-1]
+
+    struct_token_id = tokenizer("<3d_struct>", add_special_tokens=False).input_ids
+    assert len(struct_token_id) == 1
+    struct_token_id = struct_token_id[-1]
 
     if os.path.isdir(args.llm_name):
         pllm = PLLM.from_pretrained(args.llm_name, load_pretrained=False)
@@ -501,80 +600,37 @@ def test():
             train_encoders=False,
             proj_hid=1024,
             dropout=0.10,
-            protein_token_id=protein_token_id,
-            structure_token_id=structure_token_id,
+            seq_token_id=seq_token_id,
+            struct_token_id=struct_token_id,
         )
         pllm = PLLM(pllm_config)
         pllm.load_protrek_weights()
-    pllm = pllm.to("cuda")
+        pllm.llm.resize_token_embeddings(len(tokenizer))  # IMPORTANT after adding tokens
+
+    pllm = pllm.to(device="cuda", dtype=torch.bfloat16)
 
     # temp_root = f"{dirname(protein_llm.__file__)}/../../temp"
     # pllm.config.load_pretrained = False
     # pllm.save_pretrained(f"{temp_root}/pllm")
     # pllm = PLLM.from_pretrained(f"{temp_root}/pllm")
 
-    gt_ans = (
-        "<thinking>\n"
-        "1. **Signal Peptide and Localization**: The sequence starts with methionine (M), but there is no clear signal "
-        "peptide sequence that would suggest secretion or targeting to specific organelles. This suggests a cytoplasmic "
-        "or nuclear localization.\n\n"
-        "2. **Transmembrane Helices**: The sequence does not show characteristics of "
-        "transmembrane helices, such as stretches of hydrophobic residues typically found in membrane-spanning regions. "
-        "This suggests the protein is not membrane-bound.\n\n"
-        "3. **Repeats and Low-Complexity Segments**: The sequence "
-        "does not contain obvious repetitive motifs or low-complexity regions that are often associated with structural "
-        "or functional repeats.\n\n"
-        "4. **Catalytic Motifs/Domains**: The sequence contains cysteine residues (C) and "
-        "histidine (H) that could potentially form a zinc finger or other metal-binding motif, but there is no clear "
-        "pattern indicating a known catalytic domain.\n\n"
-        "5. **Family and Function**: The sequence contains a segment "
-        "\"PCPCG\" which is a characteristic motif found in some proteins of the UPF0225 family. This family is known "
-        "for proteins with unknown functions, often involved in stress responses or regulatory roles.\n\n"
-        "6. **Overall "
-        "Function**: Given the lack of clear catalytic motifs or transmembrane regions, and the presence of a UPF0225 "
-        "family motif, the protein is likely involved in a regulatory or structural role within the cell, potentially "
-        "related to stress response or protein-protein interactions.\n"
-        "</thinking>\n\n"
-        "<answer>\n"
-        "Belongs to the UPF0225 family.\n"
-        "</answer>"
-    )
+    batch = data_collator([dataset[i] for i in range(3)])
+    batch = {k: v.to(device=pllm.device, dtype=pllm.dtype if "float" in str(v.dtype) else v.dtype) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
 
-    input_ids, labels = create_sft_training_data_simple(
-        tokenizer=tokenizer,
-        messages=[dict(role="user", content=user_prompt), dict(role="assistant", content=gt_ans)],
-    )
-    input_ids, labels = torch.tensor([input_ids], dtype=torch.long, device="cuda"), torch.tensor([labels], dtype=torch.long, device="cuda")
-    attention_mask = torch.ones_like(input_ids)
-
-    train_outputs = pllm(
-        input_ids=input_ids,
-        attention_mask=attention_mask,
-        labels=labels,
-        aa_seq=[aa_seq],
-        stru_str=[structure]
-    )
+    train_outputs = pllm(**batch)
     print(train_outputs.loss)
 
-    test_prompt = tokenizer.apply_chat_template(
-        [dict(role="user", content=user_prompt)], add_generation_prompt=True, tokenize=False
-    )
-    test_inputs = tokenizer(test_prompt, return_tensors="pt").to("cuda")
-    generated_ids = pllm.generate(
-        # inputs=test_inputs.input_ids,
-        # attention_mask=test_inputs.attention_mask,
-        **test_inputs,
-        aa_seq=[aa_seq],
-        stru_str=[structure],
-        max_new_tokens=1024
-    )
+    dataset.inference_mode = True
+    batch = data_collator([dataset[i] for i in range(1)])
+    batch = {k: v.to(device=pllm.device, dtype=pllm.dtype if "float" in str(v.dtype) else v.dtype) if isinstance(v, torch.Tensor) else v
+             for k, v in batch.items()}
+    generated_ids = pllm.generate(**batch, max_new_tokens=1024)
 
     generated_ids = [
-        output_ids[len(input_ids):] for input_ids, output_ids in zip(test_inputs.input_ids, generated_ids)
+        output_ids[len(input_ids):] for input_ids, output_ids in zip(batch["input_ids"], generated_ids)
     ]
-    response = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
+    response = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
     print(response)
-    print(generated_ids[0].tolist())
 
 
 if __name__ == '__main__':

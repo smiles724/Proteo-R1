@@ -17,8 +17,8 @@ class PLLMConfig(PretrainedConfig):
         dropout: float = 0.1,
         train_encoders: bool = True,
         load_pretrained: bool = True,
-        protein_token_id: int = None,
-        structure_token_id: int = None,
+        seq_token_id: int = None,
+        struct_token_id: int = None,
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -34,8 +34,8 @@ class PLLMConfig(PretrainedConfig):
         self.dropout = dropout
         self.train_encoders = train_encoders
         self.load_pretrained = load_pretrained
-        self.protein_token_id = protein_token_id
-        self.structure_token_id = structure_token_id
+        self.seq_token_id = seq_token_id
+        self.struct_token_id = struct_token_id
 
 
 if __name__ == '__main__':

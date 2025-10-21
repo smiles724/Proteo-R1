@@ -5,7 +5,7 @@ defaults:
 # Project root directory (from train.py or relative path)
 project_root: ${oc.env:PWD}
 
-dataset: train_subset_1k.jsonl
+dataset: pdb_sft_850k_1021.jsonl
 dataset_dir: ${project_root}/data
 
 model:
@@ -18,12 +18,17 @@ model:
   proj_hid: 1024
   dropout: 0.1
 
+# for deepspeed
+local_rank: 0
+
 trainer:
   logging_steps: 1
   save_steps: 100
   overwrite_output_dir: true
   save_only_model: false
   report_to: none  # choices: [none, wandb, tensorboard, swanlab, mlflow]
+
+  deepspeed: ${project_root}/ds_config/zero3.json
 
   ### train
   # global batch size = 8 node x 1 gpu x 8 x 4 = 256

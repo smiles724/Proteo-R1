@@ -94,36 +94,3 @@ def create_sft_labels_with_masking(
         labels += [tokenizer_eos_token_id]
 
     return input_ids, labels
-
-def create_sft_training_data_simple(
-    tokenizer,
-    messages: list[dict[str, str]],
-    ignore_index: int = -100,
-    train_on_prompt: bool = False,
-    mask_history: bool = False,
-    efficient_eos: bool = False,
-) -> tuple[list[int], list[int]]:
-
-    # parse template name from the tokenizer class
-    tok_class_name = tokenizer.__class__.__name__
-    if tok_class_name.startswith("Qwen2"):
-        template_name = "qwen"
-    else:
-        raise NotImplementedError(tok_class_name)
-
-    data_args = DataArguments()
-    data_args.template = template_name
-    template = get_template_and_fix_tokenizer(tokenizer, data_args)
-
-    encoded_pairs = template.encode_multiturn(tokenizer, messages)
-
-    input_ids, labels = create_sft_labels_with_masking(
-        encoded_pairs=encoded_pairs,
-        tokenizer_eos_token_id=tokenizer.eos_token_id,
-        ignore_index=ignore_index,
-        train_on_prompt=train_on_prompt,
-        mask_history=mask_history,
-        efficient_eos=efficient_eos,
-    )
-
-    return input_ids, labels

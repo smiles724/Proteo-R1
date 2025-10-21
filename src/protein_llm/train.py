@@ -1,5 +1,6 @@
 import glob
 import os
+import sys
 from os.path import dirname
 from datetime import datetime
 
@@ -10,8 +11,8 @@ from transformers.trainer_pt_utils import save_state
 
 import protein_llm
 from protein_llm import PLLMConfig, PLLM
-from protein_llm.data.data_collator import ProteinLLMDataCollator
-from protein_llm.data.dataset import ProteinLLMDataset
+from protein_llm.data.data_collator import ProteinLLMChainDataCollator
+from protein_llm.data.dataset import ProteinLLMChainDataset
 
 
 def extract_key_params() -> str:
@@ -112,21 +113,29 @@ def main(cfg: DictConfig):
 
     model_name = cfg.model.base_model_name_or_path
     tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
-    tokenizer.add_tokens("<protein>")
-    tokenizer.add_tokens("<structure>")
-    protein_token_id = tokenizer("<protein>", add_special_tokens=False).input_ids[-1]
-    structure_token_id = tokenizer("<structure>", add_special_tokens=False).input_ids[-1]
+    dataset = ProteinLLMChainDataset(
+        data_path=f"{cfg.dataset_dir}/{cfg.dataset}",
+        tokenizer=tokenizer,
+        # TODO: train_type=cfg.train_type
+    )
+    data_collator = ProteinLLMChainDataCollator(tokenizer=tokenizer)
 
-    dataset = ProteinLLMDataset(f"{cfg.dataset_dir}/{cfg.dataset}", tokenizer=tokenizer)
-    data_collator = ProteinLLMDataCollator(tokenizer=tokenizer)
+    seq_token_id = tokenizer("<aa_seq>", add_special_tokens=False).input_ids
+    assert len(seq_token_id) == 1
+    seq_token_id = seq_token_id[-1]
+
+    struct_token_id = tokenizer("<3d_struct>", add_special_tokens=False).input_ids
+    assert len(struct_token_id) == 1
+    struct_token_id = struct_token_id[-1]
 
     pllm_config = PLLMConfig(
         **cfg.model,
-        protein_token_id=protein_token_id,
-        structure_token_id=structure_token_id,
+        seq_token_id=seq_token_id,
+        struct_token_id=struct_token_id,
     )
     pllm = PLLM(pllm_config)
     pllm.load_protrek_weights()
+    # TODO: pllm.freeze_params(cfg.freeze_choice)
 
     # ============ 5. Print model parameters info ============
     if rank == 0:
@@ -200,4 +209,6 @@ def main(cfg: DictConfig):
 
 
 if __name__ == '__main__':
+    # Filter out DeepSpeed launcher arguments that Hydra doesn't recognize
+    sys.argv = [arg for arg in sys.argv if not arg.startswith('--local_rank')]
     main()
