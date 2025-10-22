@@ -6,6 +6,11 @@ from typing import List, Tuple, Optional, Union
 
 from transformers import EsmConfig, EsmForMaskedLM, EsmTokenizer
 
+try:
+    import flash_attn
+except (ImportError, ModuleNotFoundError):
+    flash_attn = None
+
 
 class ProteinEncoder(nn.Module):
     """
@@ -35,15 +40,29 @@ class ProteinEncoder(nn.Module):
             load_pretrained: bool = True,
             gradient_checkpointing: bool = False,
             seq_level_reprs: bool = False,
+            attn_implementation: str = None
     ):
         super().__init__()
         self.seq_level_reprs = seq_level_reprs
         self.out_dim = out_dim
 
+        if attn_implementation is None:
+            attn_implementation = "flash_attention_2" if flash_attn is not None else "sdpa"
+            if attn_implementation == "sdpa":
+                print(f"[WARN] flash_attention_2 is not activated for {self.__class__.__name__} since flash_attn is not supported!")
+
         if load_pretrained:
-            self.model: EsmForMaskedLM = EsmForMaskedLM.from_pretrained(config_path)
+            self.model: EsmForMaskedLM = EsmForMaskedLM.from_pretrained(
+                config_path,
+                torch_dtype=torch.bfloat16 if attn_implementation == "flash_attention_2" else None,
+                attn_implementation=attn_implementation
+            )
         else:
-            esm_config = EsmConfig.from_pretrained(config_path)
+            esm_config = EsmConfig.from_pretrained(
+                config_path,
+                torch_dtype=torch.bfloat16 if attn_implementation == "flash_attention_2" else None,
+                attn_implementation=attn_implementation
+            )
             self.model = EsmForMaskedLM(esm_config)
 
         self.model.esm.contact_head = None

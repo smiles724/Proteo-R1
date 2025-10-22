@@ -28,7 +28,8 @@ trainer:
   save_only_model: false
   report_to: none  # choices: [none, wandb, tensorboard, swanlab, mlflow]
 
-  deepspeed: ${project_root}/ds_config/zero3.json
+  deepspeed: ${project_root}/ds_config/zero2.json
+  gradient_checkpointing: true
 
   ### train
   # global batch size = 8 node x 1 gpu x 8 x 4 = 256
@@ -40,3 +41,4 @@ trainer:
   lr_scheduler_type: cosine
   warmup_ratio: 0.1
   bf16: true
+  tf32: true

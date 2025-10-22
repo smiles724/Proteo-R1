@@ -20,7 +20,6 @@ try:
     import flash_attn
 except (ImportError, ModuleNotFoundError):
     flash_attn = None
-    print("[WARN] flash_attn is not installed, flash_attn will not work")
 
 
 class PrefixProjector(nn.Module):
@@ -51,22 +50,22 @@ class PLLM(PreTrainedModel, GenerationMixin):
     def __init__(self, config: PLLMConfig):
         super().__init__(config)
 
-        attn_impl = "flash_attention_2" if flash_attn is not None else "sdpa"
-        if attn_impl == "sdpa":
-            print("[WARN] flash_attention_2 is not activated since flash_attn is not supported!")
+        attn_implementation = "flash_attention_2" if flash_attn is not None else "sdpa"
+        if attn_implementation == "sdpa":
+            print(f"[WARN] flash_attention_2 is not activated for {self.__class__.__name__} since flash_attn is not supported!")
 
         if config.load_pretrained:
             self.llm = AutoModelForCausalLM.from_pretrained(
                 config.base_model_name_or_path,
-                torch_dtype="bfloat16" if attn_impl == "flash_attention_2" else "auto",
+                torch_dtype=torch.bfloat16 if attn_implementation == "flash_attention_2" else None,
                 low_cpu_mem_usage=True,
-                attn_implementation=attn_impl,
+                attn_implementation=attn_implementation,
             )
         else:
             llm_config = AutoConfig.from_pretrained(
                 config.base_model_name_or_path,
-                torch_dtype="bfloat16" if attn_impl == "flash_attention_2" else None,
-                attn_implementation=attn_impl
+                torch_dtype=torch.bfloat16 if attn_implementation == "flash_attention_2" else None,
+                attn_implementation=attn_implementation
             )
             self.llm = AutoModelForCausalLM.from_config(llm_config)
 
@@ -76,25 +75,48 @@ class PLLM(PreTrainedModel, GenerationMixin):
 
         if hasattr(self.llm.config, "use_cache"):
             self.llm.config.use_cache = False
-        self.llm.gradient_checkpointing_enable()
 
         self.hidden_size = self.llm.config.hidden_size
         self.prefix_len = 1 if config.single_token_prefix else config.prefix_len
 
         # Encoders (arch from configs; weights from ProTrek slots below)
+        # Note: gradient_checkpointing=False here, will be enabled by Trainer if needed
         self.protein_encoder = protein_encoder_mod.ProteinEncoder(
-            config.protein_config, out_dim=1024, load_pretrained=False, gradient_checkpointing=True
+            config.protein_config,
+            out_dim=1024,
+            load_pretrained=False,
+            gradient_checkpointing=False,
+            attn_implementation=attn_implementation,
         )
         self.structure_encoder = structure_encoder_mod.StructureEncoder(
-            config.structure_config, out_dim=1024, load_pretrained=False, gradient_checkpointing=True
+            config.structure_config,
+            out_dim=1024,
+            load_pretrained=False,
+            gradient_checkpointing=False,
+            attn_implementation=attn_implementation,
         )
 
         # Per-token projector: 1024 -> hidden size (dtype aligned to LLM)
         model_dtype = next(self.llm.parameters()).dtype
-        self.prefix_mlp = PrefixProjector(
-            in_dim=1024, mid_dim=config.proj_hid, out_hidden=self.hidden_size,
-            dropout=config.dropout, dtype=model_dtype,
-        )
+
+        if self.config.joint_projector:
+            self.prefix_mlp = PrefixProjector(
+                in_dim=1024, mid_dim=config.proj_hid, out_hidden=self.hidden_size,
+                dropout=config.dropout, dtype=model_dtype,
+            )
+        else:
+            self.prefix_mlp = torch.nn.ModuleDict(
+                dict(
+                    seq=PrefixProjector(
+                        in_dim=1024, mid_dim=config.proj_hid, out_hidden=self.hidden_size,
+                        dropout=config.dropout, dtype=model_dtype,
+                    ),
+                    struct=PrefixProjector(
+                        in_dim=1024, mid_dim=config.proj_hid, out_hidden=self.hidden_size,
+                        dropout=config.dropout, dtype=model_dtype,
+                    ),
+                )
+            )
 
         # Freeze encoders if requested
         if not config.train_encoders:
@@ -167,6 +189,34 @@ class PLLM(PreTrainedModel, GenerationMixin):
         super()._post_init()
         # Re-sync generation config after loading from checkpoint
         self._sync_generation_config()
+
+    def gradient_checkpointing_enable(self, gradient_checkpointing_kwargs=None):
+        """Enable gradient checkpointing for all components."""
+        # Enable for LLM
+        if hasattr(self.llm, "gradient_checkpointing_enable"):
+            self.llm.gradient_checkpointing_enable(gradient_checkpointing_kwargs)
+
+        # Enable for protein encoder
+        if hasattr(self.protein_encoder.model, "gradient_checkpointing_enable"):
+            self.protein_encoder.model.gradient_checkpointing_enable(gradient_checkpointing_kwargs)
+
+        # Enable for structure encoder
+        if hasattr(self.structure_encoder.model, "gradient_checkpointing_enable"):
+            self.structure_encoder.model.gradient_checkpointing_enable(gradient_checkpointing_kwargs)
+
+    def gradient_checkpointing_disable(self):
+        """Disable gradient checkpointing for all components."""
+        # Disable for LLM
+        if hasattr(self.llm, "gradient_checkpointing_disable"):
+            self.llm.gradient_checkpointing_disable()
+
+        # Disable for protein encoder
+        if hasattr(self.protein_encoder.model, "gradient_checkpointing_disable"):
+            self.protein_encoder.model.gradient_checkpointing_disable()
+
+        # Disable for structure encoder
+        if hasattr(self.structure_encoder.model, "gradient_checkpointing_disable"):
+            self.structure_encoder.model.gradient_checkpointing_disable()
 
     def load_protrek_weights(self):
         if self.config.protrek_ckpt and os.path.exists(self.config.protrek_ckpt):
@@ -269,9 +319,17 @@ class PLLM(PreTrainedModel, GenerationMixin):
 
         return seq_tok, seq_mask, struct_tok, struct_mask
 
-    def build_prefix(self, protein_tokens: torch.Tensor) -> torch.Tensor:
-        # Per-token MLP to LLM hidden size
-        return self.prefix_mlp(protein_tokens)  # (B, L', H)
+    def build_prefix(self, protein_tokens: torch.Tensor, branch: str = None) -> torch.Tensor:
+        if not self.config.joint_projector:
+            if branch is None:
+                raise RuntimeError("")
+            if branch not in self.prefix_mlp:
+                raise ValueError("")
+            return self.prefix_mlp[branch](protein_tokens)
+
+        else:
+            # Per-token MLP to LLM hidden size
+            return self.prefix_mlp(protein_tokens)  # (B, L', H)
 
     def forward(
             self,
@@ -328,8 +386,8 @@ class PLLM(PreTrainedModel, GenerationMixin):
                     )
 
                 # Project seq_tok and struct_tok through prefix_mlp
-                seq_prefix = self.build_prefix(seq_tok)  # [N, L, H]
-                struct_prefix = self.build_prefix(struct_tok)  # [N, L', H]
+                seq_prefix = self.build_prefix(seq_tok, branch="seq")  # [N, L, H]
+                struct_prefix = self.build_prefix(struct_tok, branch="struct")  # [N, L', H]
 
                 seq_counter = 0
                 struct_counter = 0
@@ -435,19 +493,19 @@ class PLLM(PreTrainedModel, GenerationMixin):
                 non_protein_token_mask = torch.logical_and(~seq_token_mask, ~structure_token_mask)  # [B, T]
                 valid_non_protein_token_mask = torch.logical_and(non_protein_token_mask, attention_mask.bool())  # [B, T]
 
-                # # Debug check: verify mask size consistency
-                # assert text_fill_mask.sum() == valid_non_protein_token_mask.sum(), \
-                #     f"Text mask size mismatch: {text_fill_mask.sum()} vs {valid_non_protein_token_mask.sum()}"
-                # assert seq_fill_mask.sum() == seq_mask.sum(), \
-                #     f"Seq mask size mismatch: {seq_fill_mask.sum()} vs {seq_mask.sum()}"
-                # assert struct_fill_mask.sum() == struct_mask.sum(), \
-                #     f"Struct mask size mismatch: {struct_fill_mask.sum()} vs {struct_mask.sum()}"
-                #
-                # # Check total fill mask sum for each batch
-                # for b_idx in range(B):
-                #     total_fill = (text_fill_mask[b_idx].sum() + seq_fill_mask[b_idx].sum() + struct_fill_mask[b_idx].sum()).item()
-                #     assert total_fill == new_lens[b_idx], \
-                #         f"Batch {b_idx} fill mask sum mismatch: {total_fill} vs {new_lens[b_idx]}"
+                # Debug check: verify mask size consistency
+                assert text_fill_mask.sum() == valid_non_protein_token_mask.sum(), \
+                    f"Text mask size mismatch: {text_fill_mask.sum()} vs {valid_non_protein_token_mask.sum()}"
+                assert seq_fill_mask.sum() == seq_mask.sum(), \
+                    f"Seq mask size mismatch: {seq_fill_mask.sum()} vs {seq_mask.sum()}"
+                assert struct_fill_mask.sum() == struct_mask.sum(), \
+                    f"Struct mask size mismatch: {struct_fill_mask.sum()} vs {struct_mask.sum()}"
+
+                # Check total fill mask sum for each batch
+                for b_idx in range(B):
+                    total_fill = (text_fill_mask[b_idx].sum() + seq_fill_mask[b_idx].sum() + struct_fill_mask[b_idx].sum()).item()
+                    assert total_fill == new_lens[b_idx], \
+                        f"Batch {b_idx} fill mask sum mismatch: {total_fill} vs {new_lens[b_idx]}"
 
                 # Fill text
                 if text_fill_mask.any():
@@ -469,43 +527,43 @@ class PLLM(PreTrainedModel, GenerationMixin):
                     inputs_embeds[struct_fill_mask] = struct_prefix[struct_mask]
                     new_attention_mask[struct_fill_mask] = 1
 
-                # # Debug checking: verify masks are mutually exclusive and contiguous
-                # assert torch.logical_and(text_fill_mask, seq_fill_mask).sum() == 0
-                # assert torch.logical_and(text_fill_mask, struct_fill_mask).sum() == 0
-                # assert torch.logical_and(seq_fill_mask, struct_fill_mask).sum() == 0
-                #
-                # for b_idx in range(B):
-                #     assert new_attention_mask[b_idx].sum() == new_lens[b_idx]
-                #
-                #     # Check attention_mask contiguity: 0s and 1s should each be contiguous
-                #     attn_mask_seq = new_attention_mask[b_idx]
-                #     if len(attn_mask_seq) > 1:
-                #         # Find all transition points
-                #         transitions = (attn_mask_seq[1:] - attn_mask_seq[:-1]).nonzero(as_tuple=True)[0]
-                #         # Contiguous 0s and 1s means at most one transition (0->1 or 1->0)
-                #         assert len(transitions) <= 1, \
-                #             f"attention_mask is not contiguous at batch {b_idx}, found {len(transitions)} transitions"
-                #
-                #     # Check labels contiguity: -100 and non-(-100) should each be contiguous
-                #     if labels is not None:
-                #         labels_seq = new_labels[b_idx]
-                #         if len(labels_seq) > 1:
-                #             # Check if it's -100
-                #             is_ignore = (labels_seq == -100)
-                #             # Find all transition points
-                #             transitions = (is_ignore[1:].long() - is_ignore[:-1].long()).nonzero(as_tuple=True)[0]
-                #             assert len(transitions) <= 2, \
-                #                 f"labels is not contiguous at batch {b_idx}, found {len(transitions)} transitions"
-                #
-                #         valid_labels_seq = labels_seq[attn_mask_seq.bool()]
-                #         if len(valid_labels_seq) > 1:
-                #             # Check if it's -100
-                #             is_ignore = (valid_labels_seq == -100)
-                #             # Find all transition points
-                #             transitions = (is_ignore[1:].long() - is_ignore[:-1].long()).nonzero(as_tuple=True)[0]
-                #             # Contiguous -100 and non-(-100) means at most one transition (ignore->valid or valid->ignore)
-                #             assert len(transitions) <= 1, \
-                #                 f"labels is not contiguous at batch {b_idx}, found {len(transitions)} transitions"
+                # Debug checking: verify masks are mutually exclusive and contiguous
+                assert torch.logical_and(text_fill_mask, seq_fill_mask).sum() == 0
+                assert torch.logical_and(text_fill_mask, struct_fill_mask).sum() == 0
+                assert torch.logical_and(seq_fill_mask, struct_fill_mask).sum() == 0
+
+                for b_idx in range(B):
+                    assert new_attention_mask[b_idx].sum() == new_lens[b_idx]
+
+                    # Check attention_mask contiguity: 0s and 1s should each be contiguous
+                    attn_mask_seq = new_attention_mask[b_idx]
+                    if len(attn_mask_seq) > 1:
+                        # Find all transition points
+                        transitions = (attn_mask_seq[1:] - attn_mask_seq[:-1]).nonzero(as_tuple=True)[0]
+                        # Contiguous 0s and 1s means at most one transition (0->1 or 1->0)
+                        assert len(transitions) <= 1, \
+                            f"attention_mask is not contiguous at batch {b_idx}, found {len(transitions)} transitions"
+
+                    # Check labels contiguity: -100 and non-(-100) should each be contiguous
+                    if labels is not None:
+                        labels_seq = new_labels[b_idx]
+                        if len(labels_seq) > 1:
+                            # Check if it's -100
+                            is_ignore = (labels_seq == -100)
+                            # Find all transition points
+                            transitions = (is_ignore[1:].long() - is_ignore[:-1].long()).nonzero(as_tuple=True)[0]
+                            assert len(transitions) <= 2, \
+                                f"labels is not contiguous at batch {b_idx}, found {len(transitions)} transitions"
+
+                        valid_labels_seq = labels_seq[attn_mask_seq.bool()]
+                        if len(valid_labels_seq) > 1:
+                            # Check if it's -100
+                            is_ignore = (valid_labels_seq == -100)
+                            # Find all transition points
+                            transitions = (is_ignore[1:].long() - is_ignore[:-1].long()).nonzero(as_tuple=True)[0]
+                            # Contiguous -100 and non-(-100) means at most one transition (ignore->valid or valid->ignore)
+                            assert len(transitions) <= 1, \
+                                f"labels is not contiguous at batch {b_idx}, found {len(transitions)} transitions"
 
                 # Update
                 attention_mask = new_attention_mask

@@ -6,6 +6,11 @@ from torch.nn.functional import normalize
 from tqdm import tqdm
 from transformers import EsmConfig, EsmForMaskedLM, EsmTokenizer
 
+try:
+    import flash_attn
+except (ImportError, ModuleNotFoundError):
+    flash_attn = None
+
 
 class StructureEncoder(nn.Module):
     """
@@ -18,15 +23,29 @@ class StructureEncoder(nn.Module):
             config_path: str = None,
             out_dim: int = 1024,
             load_pretrained: bool = True,
-            gradient_checkpointing: bool = False
+            gradient_checkpointing: bool = False,
+            attn_implementation: str = None
     ):
         super().__init__()
         self.out_dim = out_dim
 
+        if attn_implementation is None:
+            attn_implementation = "flash_attention_2" if flash_attn is not None else "sdpa"
+            if attn_implementation == "sdpa":
+                print(f"[WARN] flash_attention_2 is not activated for {self.__class__.__name__} since flash_attn is not supported!")
+
         if load_pretrained:
-            self.model = EsmForMaskedLM.from_pretrained(config_path)
+            self.model = EsmForMaskedLM.from_pretrained(
+                config_path,
+                torch_dtype=torch.bfloat16 if attn_implementation == "flash_attention_2" else None,
+                attn_implementation=attn_implementation
+            )
         else:
-            esm_config = EsmConfig.from_pretrained(config_path)
+            esm_config = EsmConfig.from_pretrained(
+                config_path,
+                torch_dtype=torch.bfloat16 if attn_implementation == "flash_attention_2" else None,
+                attn_implementation=attn_implementation
+            )
             self.model = EsmForMaskedLM(esm_config)
 
         self.model.esm.contact_head = None

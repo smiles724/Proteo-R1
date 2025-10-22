@@ -2,7 +2,6 @@ import glob
 import os
 import sys
 from os.path import dirname
-from datetime import datetime
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
@@ -135,6 +134,7 @@ def main(cfg: DictConfig):
     )
     pllm = PLLM(pllm_config)
     pllm.load_protrek_weights()
+    pllm.llm.resize_token_embeddings(len(tokenizer))  # IMPORTANT after adding tokens
     # TODO: pllm.freeze_params(cfg.freeze_choice)
 
     # ============ 5. Print model parameters info ============
@@ -195,6 +195,8 @@ def main(cfg: DictConfig):
             print(f"{module_name:<20} {format_params(train_p):<15} {format_params(frozen_p):<15} {format_params(total_p):<15}")
 
         print("=" * 60 + "\n")
+
+        print("Training Arguments:\n", training_args)
 
     trainer = Trainer(
         train_dataset=dataset,

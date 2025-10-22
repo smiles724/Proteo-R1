@@ -19,6 +19,7 @@ class PLLMConfig(PretrainedConfig):
         load_pretrained: bool = True,
         seq_token_id: int = None,
         struct_token_id: int = None,
+        joint_projector: bool = False,
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -36,6 +37,7 @@ class PLLMConfig(PretrainedConfig):
         self.load_pretrained = load_pretrained
         self.seq_token_id = seq_token_id
         self.struct_token_id = struct_token_id
+        self.joint_projector = joint_projector
 
 
 if __name__ == '__main__':
