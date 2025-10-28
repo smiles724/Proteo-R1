@@ -1,0 +1,3 @@
+data_path: ${oc.env:PWD}/data/Protdt_combined_data/af_structured_dataset_below2k.json
+train_type: pt
+inference_mode: false

@@ -7,12 +7,11 @@ name = "protein_llm"
 version = "0.0.1"
 description = ""
 authors = [
-    {name = "PLLM Team", email = ""}
+    {name = "", email = ""}
 ]
 license = {text = "Apache-2.0"}
 requires-python = ">=3.10"
 dependencies = [
-#    "vllm",
     "llamafactory",
     "numpy==1.26.4",
     "transformers==4.52.4",
@@ -32,6 +31,7 @@ dependencies = [
     "pynvml",
     "deepspeed",
     "mpi4py",
+    "azure-ai-inference", # for deepseek
 ]
 
 [tool.setuptools]

@@ -1,0 +1,4 @@
+data_path:
+  - ${oc.env:PWD}/data/pdb_sft_850k_1021.jsonl
+train_type: sft
+inference_mode: false

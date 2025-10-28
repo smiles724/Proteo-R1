@@ -60,13 +60,17 @@ class StructureEncoder(nn.Module):
         # self.proj = nn.Linear(hidden, out_dim, bias=False)  # why initialize a new projection layer?
         self.out = nn.Linear(hidden, out_dim, bias=True)
 
+        # 🔥 CRITICAL: Pre-initialize tokenizer to avoid race condition in distributed training
+        # Lazy loading via @property can cause deadlock when multiple ranks access it simultaneously
+        _ = self.tokenizer
+
     @property
     def tokenizer(self):
         if self._tokenizer is None:
             self._tokenizer = EsmTokenizer.from_pretrained(self._tokenizer_path)
         return self._tokenizer
 
-    @torch.no_grad()
+    # @torch.no_grad()
     def _encode_batch(
             self,
             sequences: List[str],
@@ -127,8 +131,11 @@ class StructureEncoder(nn.Module):
         mask_logits = self.model.lm_head(last_hidden_state) if get_mask_logits else None
         return padded_out, mask, mask_logits
 
-    def get_repr(self, proteins: List[str], batch_size: int = 64, verbose: bool = False):
+    def get_repr(self, proteins: List[str], batch_size: int = None, verbose: bool = False):
         """Backward-compatible utility: returns (emb, mask, None) with token-level reps."""
+        if batch_size is None:
+            batch_size = len(proteins)
+
         device = next(self.parameters()).device
         if isinstance(proteins, str):
             proteins = [proteins]

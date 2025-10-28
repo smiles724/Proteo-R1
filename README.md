@@ -3,8 +3,12 @@
 ## Environment Setup
 ```
 conda create -n protein_llm python=3.10 -y && conda activate protein_llm
+(protein_llm): pip install vllm==0.10.1
+# install torch later than vllm to prevent from wrong torch installation activated by vllm
 # cu128 is for the latest version, downgrade it if conflicting with your environment
-(protein_llm): pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+(protein_llm): pip install torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu128
+(protein_llm): pip install llamafactory==0.9.3
+# Finally, install other dependencies to make sure the correct version
 (protein_llm): pip install -e .
 
 # (optional) if you meet issues of MPI when running deepspeed
@@ -90,7 +94,5 @@ We support transformers-style inference by `generate()` APIs.
 Please refer to `src/protein_llm/models/modeling_pllm.py` for usage:
 
 ## TODOs
-- [ ] shared projector for both aa_seq and 3d_struct
-- [ ] prompt_template for sft data (see `MM_PROMPT_DICT` in `src/protein_llm/data/dataset.py`)
-- [ ] training OOM on newly-made sft data even by Zero2 batch_size=1 for Qwen2.5-3B on a H100. (maybe related to seq length, Zero3 + bs=1 works)
+- [ ] lower lr for protein & structure encoder during SFT
 - [ ] batch-level generate by left-padding tokenization 

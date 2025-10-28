@@ -77,13 +77,17 @@ class ProteinEncoder(nn.Module):
         # self.out = nn.Linear(hidden, out_dim, bias=False)
         self.out = nn.Linear(hidden, out_dim, bias=True)
 
+        # 🔥 CRITICAL: Pre-initialize tokenizer to avoid race condition in distributed training
+        # Lazy loading via @property can cause deadlock when multiple ranks access it simultaneously
+        _ = self.tokenizer
+
     @property
     def tokenizer(self):
         if self._tokenizer is None:
             self._tokenizer = EsmTokenizer.from_pretrained(self._tokenizer_path)
         return self._tokenizer
 
-    @torch.no_grad()
+    # @torch.no_grad()
     def _encode_batch(
             self,
             sequences: List[str],

@@ -15,11 +15,12 @@ class PLLMConfig(PretrainedConfig):
         prefix_len: int = 4,
         proj_hid: int = 1024,
         dropout: float = 0.1,
-        train_encoders: bool = True,
         load_pretrained: bool = True,
         seq_token_id: int = None,
         struct_token_id: int = None,
         joint_projector: bool = False,
+        freeze_choice: str = "none",
+        vocab_size: int = None,
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -33,11 +34,12 @@ class PLLMConfig(PretrainedConfig):
         self.prefix_len = prefix_len
         self.proj_hid = proj_hid
         self.dropout = dropout
-        self.train_encoders = train_encoders
         self.load_pretrained = load_pretrained
         self.seq_token_id = seq_token_id
         self.struct_token_id = struct_token_id
         self.joint_projector = joint_projector
+        self.freeze_choice = freeze_choice
+        self.vocab_size = vocab_size
 
 
 if __name__ == '__main__':

@@ -1,0 +1,4 @@
+data_path:
+  - ${oc.env:PWD}/data/pdb_and_selected_860k_below8k.json
+train_type: sft
+inference_mode: false
