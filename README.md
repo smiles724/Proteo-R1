@@ -73,6 +73,15 @@ We have also provided a demo for Nanobody design with the config `./api/demo/nan
 python -m api.generate --config api/demo/nanobody_config.yaml --ckpt checkpoints/model.ckpt --save_dir api/demo/nanobody_generations --gpu 0
 ```
 
+**Latent Utilities**
+
+For quick inspections of the IterVAE latent space we provide two helper scripts under `api/demo`:
+
+- `extract_latent.py` loads a demo complex (default `api/demo/7mdp_chothia.pdb`), runs the autoencoder encoder, and stores the latent pair `(Zh, Zx)` plus metadata to `api/demo/generations/latent_example.pt`.
+- `decode_latent.py` reads a saved latent file and reconstructs a binder structure with `CondIterAutoEncoder.generate`, writing the result to `api/demo/generations/latent_decode/`.
+
+Both scripts share the same arguments as the main demo (e.g. `--config`, `--ckpt`, `--gpu`). Before running them, make sure the Python environment includes the dependencies listed in `env_cuda121.yaml` (`biotite`, `rdkit`, etc.), and download the pretrained checkpoint as described above.
+
 
 ### Tutorials
 
