@@ -6,7 +6,11 @@
 *.egg-info
 **/__pycache__
 
-data/
-pretrained/
-results/
-temp/
+/data/
+/pretrained/
+/results/
+/temp/
+
+.env
+*genkai*
+*miyabi*
