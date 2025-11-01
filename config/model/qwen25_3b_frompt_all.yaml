@@ -1,2 +1,0 @@
-base_model_name_or_path: results/973570.opbs__qwen25_3b_proj__protdt_420k_below2k__pt/checkpoint-1594
-freeze_choice: none

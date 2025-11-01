@@ -1,5 +1,0 @@
-data_path:
-  - ${oc.env:PWD}/data/pdb_sft_850k_1021.jsonl
-  - ${oc.env:PWD}/data/selected_qa_14k_1024.json
-train_type: sft
-inference_mode: false

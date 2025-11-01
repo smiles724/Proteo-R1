@@ -1,0 +1,76 @@
+# SiT-XL/2 Training Configuration
+# Scalable Interpolant Transformers (SiT) - Diffusion-based generative model
+# Paper: https://arxiv.org/abs/2401.08740
+# Model: SiT-XL/2 (~675M parameters)
+
+trainer_type: sit_trainer
+
+# ==================== Dataset Configuration ====================
+dataset_config:
+  dataset_type: "sit"
+  dataset_format: "hf_dataset"
+  dataset_path: ILSVRC/imagenet-1k
+
+  # Data processor configuration
+  processor_config:
+    processor_type: "sit"
+    extra_kwargs:
+      image_size: 256  # Image size (256x256 for ImageNet)
+
+# ==================== Model Configuration ====================
+model_config:
+  load_from_config:
+    model_type: "sit"
+    config:
+      input_size: 32
+      patch_size: 8
+      hidden_size: 384
+      depth: 12
+      num_heads: 6
+      cfg_scale: 4.0
+  attn_implementation: "flash_attention_2"
+
+# ==================== Training Hyperparameters ====================
+trainer_args:
+  output_dir: "./output/sit_xl_2_training"
+
+  # Batch and Learning Rate
+  per_device_train_batch_size: 8   # Batch size per GPU (adjust based on memory)
+  gradient_accumulation_steps: 1   # Gradient accumulation steps
+  learning_rate: 1.0e-4            # Learning rate
+  weight_decay: 0.0                # Weight decay
+
+  # Epochs and Steps
+  num_train_epochs: 100            # Number of training epochs
+
+  # Learning Rate Scheduler
+  lr_scheduler_type: "cosine"      # LR scheduler
+  warmup_steps: 1000               # Warmup steps
+
+  # Saving and Logging
+  save_steps: 1000                 # Save checkpoint interval
+  save_total_limit: 5              # Max number of checkpoints
+  logging_steps: 100               # Logging interval
+  logging_first_step: true
+
+  # Evaluation (optional)
+  # evaluation_strategy: "steps"
+  # eval_steps: 1000
+
+  # Precision and Performance
+  bf16: true                       # Use BF16 mixed precision
+  dataloader_num_workers: 4        # Data loader threads
+  dataloader_pin_memory: true
+
+  # Gradient Clipping
+  max_grad_norm: 1.0
+
+  # Random Seed
+  seed: 42
+
+  # ==================== FSDP2 Distributed Training ====================
+  fsdp2: true
+  fsdp_config:
+    transformer_layer_cls_to_wrap: ["SiTBlock"]
+
+  report_to: ["wandb"]
