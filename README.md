@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo_proteor1.svg" alt="Proteo-R1" height="72">
+  <img src="assets/logo_proteor1.svg" alt="Proteo-R1" height="48">
 </p>
 
 <h1 align="center">
@@ -8,7 +8,7 @@ Proteo-R1: Reasoning Foundation Models for De Novo Protein Design
 
 <p align="center">
 Open-source inference toolkit for de novo protein design: a reasoning-capable
-understand model (Qwen3 + Protenix encoder) paired with a Boltz1-based structure
+understand model (Qwen3 + ESM-2 + AF3-like encoder) paired with a AF3-like structure
 generator.
 </p>
 
@@ -271,15 +271,17 @@ authors listed on the paper.
     <tr>
       <td align="center">
         <a href="https://github.com/smiles724">
-          <img src="assets/team/fang_wu.svg" width="100" height="100" style="object-fit: cover;" alt="Fang Wu"/>
+          <img src="assets/team/fangwu.png" width="100" height="100" style="object-fit: cover;" alt="Fang Wu"/>
           <br />
           <sub><b>Fang Wu</b></sub>
         </a>
       </td>
       <td align="center">
-        <img src="assets/team/weihao_xuan.svg" width="100" height="100" style="object-fit: cover;" alt="Weihao Xuan"/>
-        <br />
-        <sub><b>Weihao Xuan</b></sub>
+        <a href="https://weihaoxuan.com/">
+          <img src="assets/team/Weihao.jpeg" width="100" height="100" style="object-fit: cover;" alt="Weihao Xuan"/>
+          <br />
+          <sub><b>Weihao Xuan</b></sub>
+        </a>
       </td>
       <td align="center">
         <img src="assets/team/heli_qi.svg" width="100" height="100" style="object-fit: cover;" alt="Heli Qi"/>
@@ -287,21 +289,21 @@ authors listed on the paper.
         <sub><b>Heli Qi</b></sub>
       </td>
       <td align="center">
-        <img src="assets/team/hanqun_cao.svg" width="100" height="100" style="object-fit: cover;" alt="Hanqun Cao"/>
+        <img src="assets/team/hanqun_cao.jpeg" width="100" height="100" style="object-fit: cover;" alt="Hanqun Cao"/>
         <br />
         <sub><b>Hanqun Cao</b></sub>
       </td>
       <td align="center">
-        <img src="assets/team/heng_jui_chang.svg" width="100" height="100" style="object-fit: cover;" alt="Heng-Jui Chang"/>
+        <img src="assets/team/heng_jui_chang.jpeg" width="100" height="100" style="object-fit: cover;" alt="Heng-Jui Chang"/>
         <br />
         <sub><b>Heng-Jui Chang</b></sub>
       </td>
     </tr>
     <tr>
       <td align="center">
-        <img src="assets/team/zeqi_zhou.svg" width="100" height="100" style="object-fit: cover;" alt="Zeqi Zhou"/>
+        <img src="assets/team/erran_li.jpeg" width="100" height="100" style="object-fit: cover;" alt="Erran Li"/>
         <br />
-        <sub><b>Zeqi Zhou</b></sub>
+        <sub><b>Li Erran Li</b></sub>
       </td>
       <td align="center">
         <img src="assets/team/haokai_zhao.svg" width="100" height="100" style="object-fit: cover;" alt="Haokai Zhao"/>
@@ -314,14 +316,18 @@ authors listed on the paper.
         <sub><b>Ma Jian</b></sub>
       </td>
       <td align="center">
-        <img src="assets/team/carl_ma.svg" width="100" height="100" style="object-fit: cover;" alt="Carl Ma"/>
-        <br />
-        <sub><b>Carl Ma</b></sub>
+        <a href="https://cs.stanford.edu/~jure/">
+          <img src="assets/team/jure.jpeg" width="100" height="100" style="object-fit: cover;" alt="Jure Leskovec"/>
+          <br />
+          <sub><b>Jure Leskovec</b></sub>
+        </a>
       </td>
       <td align="center">
-        <img src="assets/team/yu_chi_cheng.svg" width="100" height="100" style="object-fit: cover;" alt="Yu-Chi Cheng"/>
-        <br />
-        <sub><b>Yu-Chi Cheng</b></sub>
+        <a href="https://yejinc.github.io/">
+          <img src="assets/team/yejin.jpeg" width="100" height="100" style="object-fit: cover;" alt="Yejin Choi"/>
+          <br />
+          <sub><b>Yejin Choi</b></sub>
+        </a>
       </td>
     </tr>
   </tbody>
@@ -342,7 +348,7 @@ If you find this study interesting and helpful, please cite this work using the 
 ```bibtex
 @article{wu2026proteo,
   title={Proteo-R1: Reasoning Foundation Models for De Novo Protein Design},
-  author={Wu, Fang and Xuan, Weihao and Qi, Heli and Cao, Hanqun and Chang, Heng-Jui and Zhou, Zeqi and Zhao, Haokai and Jian, Ma and Ma, Carl and Cheng, Yu-Chi and others},
+  author={Wu, Fang and Xuan, Weihao and Qi, Heli and Cao, Hanqun and Chang, Heng-Jui and Zhou, Zeqi and Zhao, Haokai and Jian, Ma and Leskovec, Jure and Choi, Yejin and others},
   journal={arXiv preprint arXiv:2605.02937},
   year={2026}
 }
