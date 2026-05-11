@@ -1,0 +1,38 @@
+{
+  "config_after": {
+    "architectures": [
+      "ProteoR1GenerateModel"
+    ],
+    "boltz_ckpt_path": null,
+    "conditioning_method": "add_embed",
+    "hidden_size": 2560,
+    "load_pretrained": false,
+    "model_type": "proteor1_generate",
+    "num_hidden_layers": 36,
+    "skip_understanding_model_load": true,
+    "vocab_size": 151936
+  },
+  "config_before": {
+    "architectures": [
+      "BagelProteinBoltzModel"
+    ],
+    "boltz_ckpt_path": null,
+    "conditioning_method": "add_embed",
+    "hidden_size": 2560,
+    "load_pretrained": false,
+    "model_type": "bagel_protein_boltz",
+    "num_hidden_layers": 36,
+    "skip_understanding_model_load": false,
+    "vocab_size": 151936
+  },
+  "out": "pretrained/proteor1_generate",
+  "output_weight_bytes": 1781952264,
+  "serialization": "pytorch_bin",
+  "source": "thinking-bio-lab/boltz_train_full_precompute_scaler_preln_conf_2200",
+  "source_weight_bytes": 9827100839,
+  "weight_files": [
+    "pretrained/proteor1_generate/ema.pt",
+    "pretrained/proteor1_generate/pytorch_model.bin"
+  ],
+  "weight_size_delta_bytes": -8045148575
+}

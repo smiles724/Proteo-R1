@@ -1,0 +1,3 @@
+[submodule "external/protenix_dev"]
+	path = external/protenix_dev
+	url = https://github.com/smiles724/protenix_dev.git

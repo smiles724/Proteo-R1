@@ -1,0 +1,44 @@
+ProteoR1
+Copyright 2026 Thinking Bio Lab
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+==============================================================================
+This product includes / is based on the following open-source software:
+==============================================================================
+
+-- Boltz1 (MIT License) --
+Boltz: Democratizing Biomolecular Interaction Modeling.
+Copyright (c) 2024 Jeremy Wohlwend, Gabriele Corso, Saro Passaro, et al.
+Source: https://github.com/jwohlwend/boltz
+
+ProteoR1's structure-generation backbone (proteor1/generate/) is derived from
+Boltz1. The structure prediction core, diffusion sampler, confidence module,
+and training-time MSA processing logic in proteor1/generate/ are
+re-implementations of components originally released under the MIT License.
+
+-- Protenix (Apache License 2.0) --
+Protenix: structure prediction model.
+Copyright (c) 2024 ByteDance Ltd. and/or its affiliates.
+Source: https://github.com/bytedance/Protenix
+
+ProteoR1's structure-encoder dependency (used by proteor1/understand/)
+relies on the Protenix encoder, distributed under Apache 2.0. The Protenix
+encoder is consumed via the `protenix_dev` package (git submodule:
+https://github.com/smiles724/protenix_dev), not vendored into this repository.
+
+-- Thinking Bio Lab (Apache License 2.0) --
+This project's public release packaging, the joint understand+generate
+training pipeline (internal, not shipped), and the prepare-cdr CLI are
+authored by Thinking Bio Lab and released under Apache 2.0. Only the
+inference-side code is distributed in this open-source release.
+
+==============================================================================
+Release notes (v0.1.0):
+==============================================================================
+- Full CITATION.bib (covering this project + upstream dependencies) will be
+  added with the paper preprint.

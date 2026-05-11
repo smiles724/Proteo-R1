@@ -1,0 +1,9 @@
+*.cif text
+*.pdb text
+*.yaml text
+*.json text
+*.npz binary
+*.safetensors binary
+*.pt binary
+*.bin binary
+**/handoffs.jsonl merge=handoffs-jsonl

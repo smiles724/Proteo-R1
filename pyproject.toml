@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "proteor1"
+version = "0.1.0"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+
+dependencies = [
+    # Core ML
+    "torch>=2.7,<=2.9",
+    "transformers==4.57.1",   # hard pin: Qwen3 + understand-model compatibility
+    "safetensors",
+    "mashumaro>=3.20",  # used by proteor1.generate.data_load.types
+    # Bio + parsing
+    "biopython",
+    "json_repair",
+    "rdkit",
+    "abnumber",               # CDR detection; README recommends conda for HMMER bundling
+    # Generation / structure inference (install-time required for OSS users)
+    "ihm",
+    "modelcif",
+    "pytorch-lightning",
+    "gemmi",
+    "torchmetrics",
+    # Boltz1 / diffusion runtime (transitively imported by proteor1.generate.*)
+    "scipy",                  # proteor1/generate/layers/initialize.py + data_load/crop/*.py
+    "einops",                 # proteor1/generate/modules/*.py + layers/attention.py + loss/diffusion.py
+    # Schema / utilities
+    "click",
+    "pyyaml",
+    "loguru",
+    "tqdm",
+    "cuequivariance==0.6.1",  # version-pin to match cuequivariance-torch / -ops-torch-cu12 0.6.1 in README step 4
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ipython",
+    "pre-commit",
+]
+
+[project.scripts]
+proteor1-prepare-cdr = "proteor1.cli.prepare_cdr:main"
+proteor1-design = "proteor1.cli.design:main"
+proteor1-protenix-dump = "proteor1.generate.inference.protenix_dump:main"
+proteor1-cdr-hidden-emit = "proteor1.generate.inference.cdr_hidden_emit:main"
+
+[tool.setuptools.packages.find]
+include = ["proteor1*"]
+
+[tool.black]
+line-length = 120
