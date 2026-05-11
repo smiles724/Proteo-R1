@@ -13,6 +13,7 @@ generator.
 </p>
 
 <div align="center">
+  <a href="https://smiles724.github.io/r1/"><img src="https://img.shields.io/badge/Website-ICML%202026-50C878?style=for-the-badge&logo=google-chrome&logoColor=white" alt="Proteo-R1 project website"></a>
   <a href="https://arxiv.org/abs/2605.02937"><img src="https://img.shields.io/badge/arXiv-2605.02937-b31b1b?style=for-the-badge&logo=arxiv&logoColor=white" alt="arXiv paper"></a>
   <a href="https://huggingface.co/thinking-bio-lab/proteor1-understand"><img src="https://img.shields.io/badge/HuggingFace-understand-ffcc4d?style=for-the-badge&logo=huggingface&logoColor=black" alt="Hugging Face understand checkpoint"></a>
   <a href="https://huggingface.co/thinking-bio-lab/proteor1-generate"><img src="https://img.shields.io/badge/HuggingFace-generate-ffcc4d?style=for-the-badge&logo=huggingface&logoColor=black" alt="Hugging Face generate checkpoint"></a>
@@ -27,11 +28,6 @@ generator.
   <a href="https://www.u-tokyo.ac.jp/en/"><img src="assets/logos/University%20of%20Tokyo.png" height="45" alt="The University of Tokyo" align="middle"></a>&nbsp;&nbsp;&nbsp;&nbsp;
   <a href="https://www.cuhk.edu.hk/"><img src="assets/logos/Chinese%20University%20of%20Hong%20Kong.png" height="45" alt="The Chinese University of Hong Kong" align="middle"></a>&nbsp;&nbsp;&nbsp;&nbsp;
   <a href="https://www.amazon.science/"><img src="assets/logos/amazon.png" height="45" alt="Amazon" align="middle"></a>&nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="assets/logos/thinking_bio_lab.svg" height="40" alt="Thinking Bio Lab" align="middle">
-</p>
-
-<p align="center">
-  <sub>More institute marks live under <a href="assets/logos/README.md"><code>assets/logos/</code></a>.</sub>
 </p>
 
 ## Model overview
@@ -41,17 +37,8 @@ expert (Qwen3 + Protenix), then conditional diffusion in the **generate** expert
 (Boltz1) with hard constraints from the design decisions.
 
 <p align="center">
-  <img src="assets/overview.png" alt="Proteo-R1 think-and-design foundation model: understand expert to generate expert to outputs" style="max-width: 96%; height: auto;">
+  <img src="assets/overview.png" alt="Proteo-R1 model overview: understand to generate" style="max-width: 96%; height: auto;">
 </p>
-
-<details>
-<summary>Figure assets (how to update)</summary>
-
-- **Current figure:** [`assets/overview.png`](assets/overview.png) — overwrite this file to refresh the diagram; keep the same filename so the README `src` stays valid.
-- **Layout:** wide PNGs (~1100–1400px) work well with `style="max-width: 96%; height: auto;"`.
-- **Second panel** (e.g. training vs inference): add e.g. `assets/overview_inference.png` and duplicate the `<p align="center">…</p>` block above.
-
-</details>
 
 ## Quickstart
 
@@ -274,14 +261,10 @@ see the `thinking-bio-lab/proteor1-{understand,generate}` repos.
   bioconda-only Python package that `abnumber` depends on at runtime; pure
   `pip install abnumber` does not pull it in. Re-run step 8.
 
-
-
-
 ## ProteoR1 team
 
 We are grateful to our contributors and collaborators. Below are the core
-authors listed on the paper (initials placeholders until you drop in real
-headshots — see [assets/team/README.md](assets/team/README.md)).
+authors listed on the paper.
 
 <table>
   <tbody>
