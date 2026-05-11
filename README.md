@@ -16,7 +16,7 @@ generator.
   <a href="https://arxiv.org/abs/2605.02937"><img src="https://img.shields.io/badge/arXiv-2605.02937-b31b1b?style=for-the-badge&logo=arxiv&logoColor=white" alt="arXiv paper"></a>
   <a href="https://huggingface.co/thinking-bio-lab/proteor1-understand"><img src="https://img.shields.io/badge/HuggingFace-understand-ffcc4d?style=for-the-badge&logo=huggingface&logoColor=black" alt="Hugging Face understand checkpoint"></a>
   <a href="https://huggingface.co/thinking-bio-lab/proteor1-generate"><img src="https://img.shields.io/badge/HuggingFace-generate-ffcc4d?style=for-the-badge&logo=huggingface&logoColor=black" alt="Hugging Face generate checkpoint"></a>
-  <a href="https://github.com/smiles724/proteor1_dev"><img src="https://img.shields.io/badge/GitHub-code-181717?style=for-the-badge&logo=github&logoColor=white" alt="GitHub repository"></a>
+  <a href="https://github.com/smiles724/Proteo-R1"><img src="https://img.shields.io/badge/GitHub-code-181717?style=for-the-badge&logo=github&logoColor=white" alt="GitHub repository"></a>
 </div>
 
 <br>
@@ -161,7 +161,7 @@ conda create -n proteor1 python=3.12 -y
 conda activate proteor1
 
 # 2. Clone with the Protenix encoder submodule
-git clone --recurse-submodules <ProteoR1 repo URL> ProteoR1
+git clone --recurse-submodules https://github.com/smiles724/Proteo-R1.git ProteoR1
 cd ProteoR1
 #    If you already cloned without --recurse-submodules:
 #        git submodule update --init --recursive
