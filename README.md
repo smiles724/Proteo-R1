@@ -1,10 +1,10 @@
-<p align="center">
-  <img src="assets/logo_proteor1.svg" alt="Proteo-R1" height="48">
-</p>
 
 <h1 align="center">
 Proteo-R1: Reasoning Foundation Models for De Novo Protein Design
 </h1>
+<p align="center">
+  <img src="assets/logo_proteor1.svg" alt="Proteo-R1" height="48">
+</p>
 
 <p align="center">
 Open-source inference toolkit for de novo protein design: a reasoning-capable
@@ -306,14 +306,18 @@ authors listed on the paper.
         <sub><b>Li Erran Li</b></sub>
       </td>
       <td align="center">
-        <img src="assets/team/haokai_zhao.svg" width="100" height="100" style="object-fit: cover;" alt="Haokai Zhao"/>
-        <br />
-        <sub><b>Haokai Zhao</b></sub>
+        <a href="https://www.cse.cuhk.edu.hk/~pheng/">
+          <img src="assets/team/Pheng-Ann%20Heng.jpeg" width="100" height="100" style="object-fit: cover;" alt="Pheng-Ann Heng"/>
+          <br />
+          <sub><b>Pheng-Ann Heng</b></sub>
+        </a>
       </td>
       <td align="center">
-        <img src="assets/team/ma_jian.svg" width="100" height="100" style="object-fit: cover;" alt="Ma Jian"/>
-        <br />
-        <sub><b>Ma Jian</b></sub>
+        <a href="https://sites.google.com/site/sugiymax/">
+          <img src="assets/team/Masashi%20Sugiyama.jpeg" width="100" height="100" style="object-fit: cover;" alt="Masashi Sugiyama"/>
+          <br />
+          <sub><b>Masashi Sugiyama</b></sub>
+        </a>
       </td>
       <td align="center">
         <a href="https://cs.stanford.edu/~jure/">
@@ -348,7 +352,7 @@ If you find this study interesting and helpful, please cite this work using the 
 ```bibtex
 @article{wu2026proteo,
   title={Proteo-R1: Reasoning Foundation Models for De Novo Protein Design},
-  author={Wu, Fang and Xuan, Weihao and Qi, Heli and Cao, Hanqun and Chang, Heng-Jui and Zhou, Zeqi and Zhao, Haokai and Jian, Ma and Leskovec, Jure and Choi, Yejin and others},
+  author={Wu, Fang and Xuan, Weihao and Qi, Heli and Cao, Hanqun and Chang, Heng-Jui and Zhou, Zeqi and Zhao, Haokai and Jian, Ma and Ma, Carl and Cheng, Yu-Chi and others},
   journal={arXiv preprint arXiv:2605.02937},
   year={2026}
 }
