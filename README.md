@@ -284,7 +284,7 @@ authors listed on the paper.
         </a>
       </td>
       <td align="center">
-        <img src="assets/team/heli_qi.svg" width="100" height="100" style="object-fit: cover;" alt="Heli Qi"/>
+        <img src="assets/team/heli_qi.jpeg" width="100" height="100" style="object-fit: cover;" alt="Heli Qi"/>
         <br />
         <sub><b>Heli Qi</b></sub>
       </td>
