@@ -1083,8 +1083,8 @@ def emit_cdr_hidden_states(
                 sort_keys=True,
             ),
             "generated_decode_chars": str(len(decoded_text)),
-            "generated_response_sample": _decoded_sample(decoded_text),
-            "generation_prompt_sample": _decoded_sample(prompt_text),
+            "generated_response_sample": decoded_text,
+            "generation_prompt_sample": prompt_text,
             "generation_seed": str(resolved.seed),
             "generation_config": json.dumps(
                 {

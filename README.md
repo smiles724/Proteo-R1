@@ -106,21 +106,6 @@ The repository ships 5 demo entries under `data/demo/` (1 nano antibody +
 4 paired heavy/light antibodies) so you can run the Quickstart against any
 of them by swapping the `8q7o_A__C` identifier.
 
-### CPU-only sanity check
-
-No GPU? Use the example wrapper with `--dry-run` to validate the install +
-CLI plumbing without loading model weights:
-
-```bash
-python examples/inference_demo.py --demo-entry 8q7o_A__C --out work/demo --dry-run
-
-# Or, on GPU, exercise the same opt-in inpainting plumbing the Quickstart
-# block exposes (requires <record_id>.npz files in Boltz1 internal format
-# under --ground-truth-structure-dir; OFF by default):
-python examples/inference_demo.py --demo-entry 8q7o_A__C --out work/demo \
-  --structure-inpainting --ground-truth-structure-dir path/to/gt_npz_dir
-```
-
 ### Reproducibility note
 
 Sampling at non-zero temperature plus CUDA kernel implementation
